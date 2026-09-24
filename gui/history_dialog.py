@@ -18,21 +18,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.history import HistoryEntry, load_history, save_history
-
-HISTORY_STYLE = """
-QWidget { background: #202020; color: #F3F3F3;
-    font-family: 'Segoe UI Variable Display', 'Segoe UI', sans-serif; font-size: 13px; }
-QTableView { background: #1A1A1A; gridline-color: #2A2A2A; border: 1px solid #333; border-radius: 6px; }
-QTableView::item { padding: 6px; }
-QTableView::item:selected { background: #0078D4; color: white; }
-QHeaderView::section { background: #252525; color: #AAAAAA; padding: 8px; border: none; font-weight: 600; }
-QLineEdit { background: #2B2B2B; border: 1px solid #404040; border-radius: 6px; padding: 7px 12px; color: #FFFFFF; }
-QLineEdit:focus { border: 1px solid #60CDFF; }
-QPushButton { background: #2D2D2D; border: 1px solid #454545; border-radius: 6px; padding: 7px 14px; font-weight: 600; }
-QPushButton:hover { background: #383838; }
-QPushButton#dangerButton { background: #5C1A1A; border: 1px solid #7A2222; color: #FF6B6B; }
-QPushButton#dangerButton:hover { background: #7A2222; }
-"""
+from core.settings import load_settings
+from gui.themes import get_theme_stylesheet, is_dark_theme_active
 
 COLUMNS = ["Data i czas", "Szablon", "Katalog A", "Katalog B", "Pliki", "Różnice", "Sync", "Zaktualizowano", "MB"]
 
@@ -42,7 +29,9 @@ class HistoryDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("📜 Historia Porównań i Synchronizacji")
         self.resize(1000, 580)
-        self.setStyleSheet(HISTORY_STYLE)
+        
+        theme = load_settings().theme
+        self.setStyleSheet(get_theme_stylesheet(theme))
 
         self._entries: list[HistoryEntry] = []
         self._build_ui()
@@ -53,9 +42,12 @@ class HistoryDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 12)
         layout.setSpacing(10)
 
+        is_dark = is_dark_theme_active(load_settings().theme)
+        header_color = "#60CDFF" if is_dark else "#005FB8"
+
         header = QLabel("📜 Historia Porównań i Synchronizacji")
         header.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        header.setStyleSheet("color: #60CDFF; margin-bottom: 4px;")
+        header.setStyleSheet(f"color: {header_color}; margin-bottom: 4px;")
         layout.addWidget(header)
 
         # Pasek wyszukiwania

@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
     QPushButton,
     QSpinBox,
     QTabWidget,
@@ -26,30 +25,9 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 
-from core.settings import AppSettings, load_settings, save_settings
-
-SETTINGS_STYLE = """
-QWidget { background-color: #202020; color: #F3F3F3;
-    font-family: 'Segoe UI Variable Display', 'Segoe UI', sans-serif; font-size: 13px; }
-QTabWidget::pane { border: 1px solid #3A3A3A; border-radius: 6px; }
-QTabBar::tab { background: #2A2A2A; color: #AAAAAA; padding: 8px 18px; border-radius: 5px 5px 0 0; margin-right: 2px; }
-QTabBar::tab:selected { background: #0078D4; color: #FFFFFF; font-weight: 600; }
-QGroupBox { border: 1px solid #3A3A3A; border-radius: 8px; margin-top: 10px; padding-top: 12px; font-weight: 600; }
-QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #60CDFF; }
-QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {
-    background: #2B2B2B; border: 1px solid #404040; border-radius: 6px;
-    padding: 6px 10px; color: #FFFFFF; }
-QComboBox:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus { border: 1px solid #60CDFF; }
-QCheckBox { color: #EAEAEA; spacing: 8px; }
-QCheckBox::indicator { width: 18px; height: 18px; border: 1px solid #555; border-radius: 4px; background: #2B2B2B; }
-QCheckBox::indicator:checked { background: #0078D4; border: 1px solid #60CDFF; }
-QPushButton { background: #2D2D2D; border: 1px solid #454545; border-radius: 6px; padding: 7px 14px; font-weight: 600; color: #FFFFFF; }
-QPushButton:hover { background: #383838; }
-QPushButton#primaryButton { background: #0078D4; border: 1px solid #1084D8; color: #FFFFFF; }
-QPushButton#primaryButton:hover { background: #1084D8; }
-QListWidget { background: #1A1A1A; border: 1px solid #333; border-radius: 6px; color: #F3F3F3; }
-QTextEdit { background: #1A1A1A; border: 1px solid #333; border-radius: 6px; color: #F3F3F3; font-family: Consolas; font-size: 12px; }
-"""
+from core.settings import AppSettings, load_settings, save_settings, invalidate_cache
+from core.i18n import tr
+from gui.themes import apply_theme_to_app, get_theme_stylesheet, is_dark_theme_active
 
 
 class SettingsDialog(QDialog):
@@ -57,11 +35,13 @@ class SettingsDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("⚙️ Ustawienia FolderSync")
-        self.resize(680, 560)
-        self.setStyleSheet(SETTINGS_STYLE)
-
         self.settings = load_settings()
+        self.lang = self.settings.language
+
+        self.setWindowTitle(tr("settings_title", self.lang))
+        self.resize(680, 560)
+        self.setStyleSheet(get_theme_stylesheet(self.settings.theme))
+
         self._build_ui()
         self._load_values()
 
@@ -70,26 +50,29 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        header = QLabel("⚙️ Ustawienia Aplikacji FolderSync")
-        header.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        header.setStyleSheet("color: #60CDFF; margin-bottom: 6px;")
-        layout.addWidget(header)
+        is_dark = is_dark_theme_active(self.settings.theme)
+        header_color = "#60CDFF" if is_dark else "#005FB8"
+
+        self.lbl_header = QLabel(tr("settings_header", self.lang))
+        self.lbl_header.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self.lbl_header.setStyleSheet(f"color: {header_color}; margin-bottom: 6px;")
+        layout.addWidget(self.lbl_header)
 
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
-        self.tabs.addTab(self._tab_appearance(), "🎨 Wygląd")
-        self.tabs.addTab(self._tab_comparison(), "🔍 Porównywanie")
-        self.tabs.addTab(self._tab_sync(), "⚡ Synchronizacja")
-        self.tabs.addTab(self._tab_exclusions(), "🚫 Wykluczenia")
-        self.tabs.addTab(self._tab_history(), "📜 Historia i Raporty")
-        self.tabs.addTab(self._tab_tray(), "🔔 Zasobnik")
+        self.tabs.addTab(self._tab_appearance(), tr("tab_appearance", self.lang))
+        self.tabs.addTab(self._tab_comparison(), tr("tab_comparison", self.lang))
+        self.tabs.addTab(self._tab_sync(), tr("tab_sync", self.lang))
+        self.tabs.addTab(self._tab_exclusions(), tr("tab_exclusions", self.lang))
+        self.tabs.addTab(self._tab_history(), tr("tab_history", self.lang))
+        self.tabs.addTab(self._tab_tray(), tr("tab_tray", self.lang))
 
         # Przyciski
         btn_box = QDialogButtonBox()
-        btn_save = btn_box.addButton("💾 Zapisz ustawienia", QDialogButtonBox.ButtonRole.AcceptRole)
+        btn_save = btn_box.addButton(tr("btn_save_settings", self.lang), QDialogButtonBox.ButtonRole.AcceptRole)
         btn_save.setObjectName("primaryButton")
-        btn_cancel = btn_box.addButton("Anuluj", QDialogButtonBox.ButtonRole.RejectRole)
+        btn_cancel = btn_box.addButton(tr("btn_cancel", self.lang), QDialogButtonBox.ButtonRole.RejectRole)
         btn_box.accepted.connect(self._save)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
@@ -99,18 +82,23 @@ class SettingsDialog(QDialog):
         w = QWidget()
         layout = QVBoxLayout(w)
 
-        grp = QGroupBox("Motyw i Język")
+        grp = QGroupBox(tr("grp_theme_lang", self.lang))
         g_layout = QVBoxLayout(grp)
 
         row_theme = QHBoxLayout()
-        row_theme.addWidget(QLabel("Motyw interfejsu:"))
+        row_theme.addWidget(QLabel(tr("lbl_theme", self.lang)))
         self.combo_theme = QComboBox()
-        self.combo_theme.addItems(["Ciemny (Dark)", "Jasny (Light)", "Automatyczny (zgodny z Windows)"])
+        self.combo_theme.addItems([
+            tr("theme_dark", self.lang),
+            tr("theme_light", self.lang),
+            tr("theme_auto", self.lang),
+        ])
+        self.combo_theme.currentIndexChanged.connect(self._on_theme_preview_changed)
         row_theme.addWidget(self.combo_theme)
         g_layout.addLayout(row_theme)
 
         row_lang = QHBoxLayout()
-        row_lang.addWidget(QLabel("Język:"))
+        row_lang.addWidget(QLabel(tr("lbl_lang", self.lang)))
         self.combo_lang = QComboBox()
         self.combo_lang.addItems(["Polski", "English"])
         row_lang.addWidget(self.combo_lang)
@@ -120,46 +108,63 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return w
 
+    def _on_theme_preview_changed(self, idx: int):
+        theme_vals = ["dark", "light", "auto"]
+        if 0 <= idx < len(theme_vals):
+            is_dark = apply_theme_to_app(theme_vals[idx], self)
+            header_color = "#60CDFF" if is_dark else "#005FB8"
+            self.lbl_header.setStyleSheet(f"color: {header_color}; margin-bottom: 6px;")
+
     # ─── Zakładka: Porównywanie ───────────────────────────────────────────
     def _tab_comparison(self) -> QWidget:
         w = QWidget()
         layout = QVBoxLayout(w)
 
-        grp = QGroupBox("Parametry Porównywania")
+        is_pl = self.lang == "pl"
+        grp = QGroupBox("Parametry Porównywania" if is_pl else "Comparison Parameters")
         g_layout = QVBoxLayout(grp)
         g_layout.setSpacing(10)
 
         row_tol = QHBoxLayout()
-        row_tol.addWidget(QLabel("Tolerancja czasu modyfikacji [sekundy]:"))
+        row_tol.addWidget(QLabel(
+            "Tolerancja czasu modyfikacji [sekundy]:" if is_pl else "Modification time tolerance [seconds]:"
+        ))
         self.spin_tolerance = QDoubleSpinBox()
         self.spin_tolerance.setRange(0.0, 60.0)
         self.spin_tolerance.setSingleStep(0.5)
-        self.spin_tolerance.setToolTip("Ważne dla dysków FAT32/USB (np. 2s) lub NAS (np. 5s)")
+        self.spin_tolerance.setToolTip("Ważne dla dysków FAT32/USB (np. 2s) lub NAS (np. 5s)" if is_pl else "Important for FAT32/USB (e.g. 2s) or NAS drives (e.g. 5s)")
         row_tol.addWidget(self.spin_tolerance)
         g_layout.addLayout(row_tol)
 
         row_block = QHBoxLayout()
-        row_block.addWidget(QLabel("Rozmiar bloku SHA-256 [KB]:"))
+        row_block.addWidget(QLabel(
+            "Rozmiar bloku SHA-256 [KB]:" if is_pl else "SHA-256 block size [KB]:"
+        ))
         self.spin_block = QSpinBox()
         self.spin_block.setRange(8, 4096)
         self.spin_block.setSingleStep(64)
-        self.spin_block.setToolTip("Większy blok = szybciej na SSD, mniejszy = mniejsze użycie RAM")
+        self.spin_block.setToolTip("Większy blok = szybciej na SSD, mniejszy = mniejsze użycie RAM" if is_pl else "Larger block = faster on SSD, smaller = lower RAM usage")
         row_block.addWidget(self.spin_block)
         g_layout.addLayout(row_block)
 
-        self.chk_auto_compare = QCheckBox("Automatycznie porównaj po załadowaniu szablonu")
-        self.chk_auto_compare.setToolTip("Po wyborze profilu z listy natychmiast uruchamia porównanie")
+        self.chk_auto_compare = QCheckBox(
+            "Automatycznie porównaj po załadowaniu szablonu" if is_pl else "Auto-compare after loading a profile"
+        )
+        self.chk_auto_compare.setToolTip("Po wyborze profilu z listy natychmiast uruchamia porównanie" if is_pl else "Immediately starts comparison when profile is chosen")
         g_layout.addWidget(self.chk_auto_compare)
 
         layout.addWidget(grp)
 
-        grp2 = QGroupBox("Domyślny widok tabeli")
+        grp2 = QGroupBox("Domyślny widok tabeli" if is_pl else "Default Table View")
         g2_layout = QVBoxLayout(grp2)
 
         row_sort = QHBoxLayout()
-        row_sort.addWidget(QLabel("Domyślne sortowanie:"))
+        row_sort.addWidget(QLabel("Domyślne sortowanie:" if is_pl else "Default sorting:"))
         self.combo_sort = QComboBox()
-        self.combo_sort.addItems(["Status (priorytety)", "Ścieżka pliku (A-Z)", "Data modyfikacji A", "Data modyfikacji B", "Rozmiar"])
+        if is_pl:
+            self.combo_sort.addItems(["Status (priorytety)", "Ścieżka pliku (A-Z)", "Data modyfikacji A", "Data modyfikacji B", "Rozmiar"])
+        else:
+            self.combo_sort.addItems(["Status (priority)", "File path (A-Z)", "Modified date A", "Modified date B", "Size"])
         row_sort.addWidget(self.combo_sort)
         g2_layout.addLayout(row_sort)
 
@@ -172,29 +177,44 @@ class SettingsDialog(QDialog):
         w = QWidget()
         layout = QVBoxLayout(w)
 
-        grp = QGroupBox("Zachowanie Synchronizacji")
+        is_pl = self.lang == "pl"
+        grp = QGroupBox("Zachowanie Synchronizacji" if is_pl else "Synchronization Behavior")
         g_layout = QVBoxLayout(grp)
         g_layout.setSpacing(10)
 
         row_confirm = QHBoxLayout()
-        row_confirm.addWidget(QLabel("Okno potwierdzenia przed synchronizacją:"))
+        row_confirm.addWidget(QLabel("Okno potwierdzenia przed synchronizacją:" if is_pl else "Confirmation prompt before sync:"))
         self.combo_confirm = QComboBox()
-        self.combo_confirm.addItems([
-            "Zawsze pytaj",
-            "Tylko gdy nadpisujesz pliki",
-            "Nigdy nie pytaj (niebezpieczne!)",
-        ])
+        if is_pl:
+            self.combo_confirm.addItems([
+                "Zawsze pytaj",
+                "Tylko gdy nadpisujesz pliki",
+                "Nigdy nie pytaj (niebezpieczne!)",
+            ])
+        else:
+            self.combo_confirm.addItems([
+                "Always ask",
+                "Only when overwriting files",
+                "Never ask (dangerous!)",
+            ])
         row_confirm.addWidget(self.combo_confirm)
         g_layout.addLayout(row_confirm)
 
         row_mode = QHBoxLayout()
-        row_mode.addWidget(QLabel("Domyślny tryb synchronizacji:"))
+        row_mode.addWidget(QLabel("Domyślny tryb synchronizacji:" if is_pl else "Default sync mode:"))
         self.combo_default_sync = QComboBox()
-        self.combo_default_sync.addItems([
-            "Inteligentna aktualizacja (nowsze zastępują starsze)",
-            "Kopiuj z A do B",
-            "Kopiuj z B do A",
-        ])
+        if is_pl:
+            self.combo_default_sync.addItems([
+                "Inteligentna aktualizacja (nowsze zastępują starsze)",
+                "Kopiuj z A do B",
+                "Kopiuj z B do A",
+            ])
+        else:
+            self.combo_default_sync.addItems([
+                "Smart update (newer replaces older)",
+                "Copy from A to B",
+                "Copy from B to A",
+            ])
         row_mode.addWidget(self.combo_default_sync)
         g_layout.addLayout(row_mode)
 
@@ -207,16 +227,24 @@ class SettingsDialog(QDialog):
         w = QWidget()
         layout = QVBoxLayout(w)
 
-        grp = QGroupBox("Globalne wzorce wykluczeń (glob, jeden na linię)")
+        is_pl = self.lang == "pl"
+        grp = QGroupBox(
+            "Globalne wzorce wykluczeń (glob, jeden na linię)" if is_pl else "Global Exclusion Patterns (glob, one per line)"
+        )
         g_layout = QVBoxLayout(grp)
 
-        info = QLabel(
+        info_text = (
             "Pliki i katalogi pasujące do poniższych wzorców będą pomijane podczas skanowania.\n"
             "Wzorce obsługują znaki globbing: * (dowolny ciąg), ? (jeden znak).\n"
             "Przykłady: *.tmp  |  Thumbs.db  |  node_modules  |  .git"
+            if is_pl else
+            "Files and folders matching patterns below will be skipped during scan.\n"
+            "Supports globbing wildcards: * (any sequence), ? (single character).\n"
+            "Examples: *.tmp  |  Thumbs.db  |  node_modules  |  .git"
         )
+        info = QLabel(info_text)
         info.setWordWrap(True)
-        info.setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        info.setStyleSheet("color: #888888; font-size: 12px;")
         g_layout.addWidget(info)
 
         self.text_exclusions = QTextEdit()
@@ -224,7 +252,7 @@ class SettingsDialog(QDialog):
         g_layout.addWidget(self.text_exclusions)
 
         btn_row = QHBoxLayout()
-        btn_restore = QPushButton("⟳ Przywróć domyślne")
+        btn_restore = QPushButton("⟳ Przywróć domyślne" if is_pl else "⟳ Restore Defaults")
         btn_restore.clicked.connect(self._restore_default_exclusions)
         btn_row.addWidget(btn_restore)
         btn_row.addStretch()
@@ -238,11 +266,12 @@ class SettingsDialog(QDialog):
         w = QWidget()
         layout = QVBoxLayout(w)
 
-        grp = QGroupBox("Historia Porównań")
+        is_pl = self.lang == "pl"
+        grp = QGroupBox("Historia Porównań" if is_pl else "Comparison History")
         g_layout = QVBoxLayout(grp)
 
         row_max = QHBoxLayout()
-        row_max.addWidget(QLabel("Maksymalna liczba wpisów w historii:"))
+        row_max.addWidget(QLabel("Maksymalna liczba wpisów w historii:" if is_pl else "Max history entries:"))
         self.spin_max_history = QSpinBox()
         self.spin_max_history.setRange(10, 10000)
         self.spin_max_history.setSingleStep(50)
@@ -251,14 +280,16 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(grp)
 
-        grp2 = QGroupBox("Eksport Raportów")
+        grp2 = QGroupBox("Eksport Raportów" if is_pl else "Report Export")
         g2_layout = QVBoxLayout(grp2)
 
         row_dir = QHBoxLayout()
-        row_dir.addWidget(QLabel("Domyślny folder eksportu raportów:"))
+        row_dir.addWidget(QLabel("Domyślny folder eksportu raportów:" if is_pl else "Default reports folder:"))
         self.edit_report_dir = QLineEdit()
-        self.edit_report_dir.setPlaceholderText("Pozostaw puste — program zapyta przy każdym eksporcie")
-        btn_browse = QPushButton("Przeglądaj...")
+        self.edit_report_dir.setPlaceholderText(
+            "Pozostaw puste — program zapyta przy każdym eksporcie" if is_pl else "Leave blank — ask each time"
+        )
+        btn_browse = QPushButton("Przeglądaj..." if is_pl else "Browse...")
         btn_browse.clicked.connect(self._browse_report_dir)
         row_dir.addWidget(self.edit_report_dir)
         row_dir.addWidget(btn_browse)
@@ -273,13 +304,20 @@ class SettingsDialog(QDialog):
         w = QWidget()
         layout = QVBoxLayout(w)
 
-        grp = QGroupBox("Zachowanie ikony w zasobniku systemowym")
+        is_pl = self.lang == "pl"
+        grp = QGroupBox("Zachowanie ikony w zasobniku systemowym" if is_pl else "System Tray Behavior")
         g_layout = QVBoxLayout(grp)
         g_layout.setSpacing(10)
 
-        self.chk_minimize_to_tray = QCheckBox("Przy minimalizacji schowaj do zasobnika (zamiast na pasek zadań)")
-        self.chk_close_to_tray = QCheckBox("Przy zamknięciu okna schowaj do zasobnika (kontynuuj w tle)")
-        self.chk_tray_notifications = QCheckBox("Wyświetlaj powiadomienia Windows po zakończeniu synchronizacji")
+        self.chk_minimize_to_tray = QCheckBox(
+            "Przy minimalizacji schowaj do zasobnika (zamiast na pasek zadań)" if is_pl else "Minimize window to system tray"
+        )
+        self.chk_close_to_tray = QCheckBox(
+            "Przy zamknięciu okna schowaj do zasobnika (kontynuuj w tle)" if is_pl else "Close window to system tray (keep running)"
+        )
+        self.chk_tray_notifications = QCheckBox(
+            "Wyświetlaj powiadomienia Windows po zakończeniu synchronizacji" if is_pl else "Show Windows desktop notifications upon completion"
+        )
 
         g_layout.addWidget(self.chk_minimize_to_tray)
         g_layout.addWidget(self.chk_close_to_tray)
@@ -299,8 +337,6 @@ class SettingsDialog(QDialog):
         self.spin_tolerance.setValue(s.time_tolerance_seconds)
         self.spin_block.setValue(s.sha256_block_size // 1024)
         self.chk_auto_compare.setChecked(s.auto_compare_on_profile_load)
-        sort_map = {"status": 0, "path": 1, "mtime_a": 2, "mtime_b": 3, "size": 4}
-        # Default
         self.combo_sort.setCurrentIndex(0)
 
         confirm_map = {"always": 0, "overwrite_only": 1, "never": 2}
@@ -309,7 +345,6 @@ class SettingsDialog(QDialog):
         self.combo_default_sync.setCurrentIndex(sync_map.get(s.default_sync_mode, 0))
 
         self.text_exclusions.setPlainText("\n".join(s.global_exclude_patterns))
-
         self.spin_max_history.setValue(s.max_history_entries)
         self.edit_report_dir.setText(s.report_output_dir)
 
@@ -344,9 +379,9 @@ class SettingsDialog(QDialog):
         s.close_to_tray = self.chk_close_to_tray.isChecked()
         s.show_tray_notifications = self.chk_tray_notifications.isChecked()
 
-        from core.settings import invalidate_cache
         invalidate_cache()
         if save_settings(s):
+            apply_theme_to_app(s.theme)
             self.accept()
 
     def _restore_default_exclusions(self):
@@ -354,6 +389,7 @@ class SettingsDialog(QDialog):
         self.text_exclusions.setPlainText("\n".join(defaults))
 
     def _browse_report_dir(self):
-        path = QFileDialog.getExistingDirectory(self, "Wybierz folder dla raportów")
+        title = "Wybierz folder dla raportów" if self.lang == "pl" else "Select Reports Folder"
+        path = QFileDialog.getExistingDirectory(self, title)
         if path:
             self.edit_report_dir.setText(path)

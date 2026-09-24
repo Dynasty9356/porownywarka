@@ -47,6 +47,13 @@ from core.comparator import ComparisonItem, FileStatus, calculate_sha256, compar
 from core.history import HistoryEntry, append_history_entry, make_entry_id
 from core.profiles import SyncProfile, delete_profile, load_profiles, save_profile
 from core.settings import load_settings
+from core.i18n import tr, get_status_display_name
+from gui.themes import (
+    apply_theme_to_app,
+    get_status_colors,
+    get_theme_stylesheet,
+    is_dark_theme_active,
+)
 from core.synchronizer import (
     SyncAction,
     SyncDirection,
@@ -54,195 +61,6 @@ from core.synchronizer import (
     execute_sync,
     plan_sync_actions,
 )
-
-
-DARK_FLUENT_STYLE = """
-/* Styl Windows 11 Fluent - Ciemny, zgodny z WCAG (kontrast tekstu > 10:1) */
-QWidget {
-    background-color: #202020;
-    color: #F3F3F3;
-    font-family: 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
-    font-size: 13px;
-}
-
-QGroupBox {
-    border: 1px solid #3A3A3A;
-    border-radius: 8px;
-    margin-top: 10px;
-    padding-top: 12px;
-    font-weight: 600;
-    color: #E0E0E0;
-}
-
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
-    color: #60CDFF;
-}
-
-QLineEdit {
-    background-color: #2B2B2B;
-    border: 1px solid #404040;
-    border-radius: 6px;
-    padding: 7px 10px;
-    color: #FFFFFF;
-    selection-background-color: #0078D4;
-}
-
-QLineEdit:focus {
-    border: 1px solid #60CDFF;
-    background-color: #323232;
-}
-
-QPushButton {
-    background-color: #2D2D2D;
-    border: 1px solid #454545;
-    border-radius: 6px;
-    padding: 7px 14px;
-    font-weight: 600;
-    color: #FFFFFF;
-}
-
-QPushButton:hover {
-    background-color: #383838;
-    border: 1px solid #5A5A5A;
-}
-
-QPushButton:pressed {
-    background-color: #252525;
-}
-
-QPushButton:disabled {
-    background-color: #1A1A1A;
-    color: #666666;
-    border: 1px solid #2B2B2B;
-}
-
-/* Wyróżniony główny przycisk akcji (Accent Color) */
-QPushButton#primaryButton {
-    background-color: #0078D4;
-    border: 1px solid #1084D8;
-    color: #FFFFFF;
-}
-
-QPushButton#primaryButton:hover {
-    background-color: #1084D8;
-}
-
-QPushButton#primaryButton:pressed {
-    background-color: #006CBE;
-}
-
-/* Przycisk synchronizacji */
-QPushButton#syncButton {
-    background-color: #0E7A0D;
-    border: 1px solid #148C13;
-    color: #FFFFFF;
-    font-size: 14px;
-    padding: 9px 22px;
-}
-
-QPushButton#syncButton:hover {
-    background-color: #148C13;
-}
-
-QPushButton#syncButton:pressed {
-    background-color: #0A6009;
-}
-
-QTableWidget {
-    background-color: #1A1A1A;
-    border: 1px solid #333333;
-    border-radius: 6px;
-    gridline-color: #2A2A2A;
-    selection-background-color: #264F78;
-    selection-color: #FFFFFF;
-}
-
-QHeaderView::section {
-    background-color: #252525;
-    color: #E0E0E0;
-    padding: 8px;
-    border: none;
-    border-bottom: 1px solid #3D3D3D;
-    font-weight: 600;
-}
-
-QHeaderView::section:hover {
-    background-color: #303030;
-}
-
-QProgressBar {
-    border: 1px solid #404040;
-    border-radius: 4px;
-    text-align: center;
-    background-color: #262626;
-    color: #FFFFFF;
-    font-weight: 600;
-    height: 18px;
-}
-
-QProgressBar::chunk {
-    background-color: #0078D4;
-    border-radius: 3px;
-}
-
-QComboBox {
-    background-color: #2D2D2D;
-    border: 1px solid #454545;
-    border-radius: 6px;
-    padding: 6px 12px;
-    color: #FFFFFF;
-}
-
-QComboBox::drop-down {
-    border: none;
-    width: 24px;
-}
-
-QComboBox QAbstractItemView {
-    background-color: #2B2B2B;
-    border: 1px solid #454545;
-    selection-background-color: #0078D4;
-    color: #FFFFFF;
-}
-
-QCheckBox {
-    color: #EAEAEA;
-    spacing: 8px;
-}
-
-QCheckBox::indicator {
-    width: 18px;
-    height: 18px;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    background-color: #2B2B2B;
-}
-
-QCheckBox::indicator:checked {
-    background-color: #0078D4;
-    border: 1px solid #60CDFF;
-}
-
-QMenu {
-    background-color: #2A2A2A;
-    border: 1px solid #444444;
-    border-radius: 6px;
-    padding: 4px;
-}
-
-QMenu::item {
-    padding: 6px 20px;
-    border-radius: 4px;
-}
-
-QMenu::item:selected {
-    background-color: #0078D4;
-    color: #FFFFFF;
-}
-"""
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -319,7 +137,12 @@ class DiffViewerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Podgląd różnic w treści: {rel_path}")
         self.resize(950, 650)
-        self.setStyleSheet(DARK_FLUENT_STYLE)
+        theme = load_settings().theme
+        self.setStyleSheet(get_theme_stylesheet(theme))
+
+        is_dark = is_dark_theme_active(theme)
+        color_a = "#60CDFF" if is_dark else "#005FB8"
+        color_b = "#FFA500" if is_dark else "#D83B01"
 
         layout = QVBoxLayout(self)
 
@@ -334,7 +157,7 @@ class DiffViewerDialog(QDialog):
         layout_a = QVBoxLayout(widget_a)
         layout_a.setContentsMargins(0, 0, 0, 0)
         lbl_a = QLabel(f"Katalog A ({file_a.parent.name}):")
-        lbl_a.setStyleSheet("color: #60CDFF; font-weight: bold;")
+        lbl_a.setStyleSheet(f"color: {color_a}; font-weight: bold;")
         self.text_a = QTextEdit()
         self.text_a.setReadOnly(True)
         self.text_a.setFont(QFont("Consolas", 10))
@@ -347,7 +170,7 @@ class DiffViewerDialog(QDialog):
         layout_b = QVBoxLayout(widget_b)
         layout_b.setContentsMargins(0, 0, 0, 0)
         lbl_b = QLabel(f"Katalog B ({file_b.parent.name}):")
-        lbl_b.setStyleSheet("color: #FFA500; font-weight: bold;")
+        lbl_b.setStyleSheet(f"color: {color_b}; font-weight: bold;")
         self.text_b = QTextEdit()
         self.text_b.setReadOnly(True)
         self.text_b.setFont(QFont("Consolas", 10))
@@ -393,7 +216,8 @@ class ConfirmSyncDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Potwierdzenie Bezpieczeństwa Synchronizacji")
         self.resize(550, 320)
-        self.setStyleSheet(DARK_FLUENT_STYLE)
+        theme = load_settings().theme
+        self.setStyleSheet(get_theme_stylesheet(theme))
 
         total = len(actions)
         overwrites = sum(1 for a in actions if a.will_overwrite)
@@ -402,9 +226,12 @@ class ConfirmSyncDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
 
+        is_dark = is_dark_theme_active(theme)
+        title_color = "#FFA500" if is_dark else "#D83B01"
+
         title = QLabel("⚠️ Wymagane potwierdzenie operacji na plikach")
         title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        title.setStyleSheet("color: #FFA500;")
+        title.setStyleSheet(f"color: {title_color};")
         layout.addWidget(title)
 
         info_text = (
@@ -462,9 +289,10 @@ class DropLineEdit(QLineEdit):
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("FolderSync - Porównywarka i Synchronizator Katalogów")
+        settings = load_settings()
+        self.setWindowTitle(tr("window_title", settings.language))
         self.resize(1150, 780)
-        self.setStyleSheet(DARK_FLUENT_STYLE)
+        apply_theme_to_app(settings.theme, self)
 
         icon_path = Path(__file__).resolve().parent.parent / "app_icon.ico"
         if icon_path.exists():
@@ -481,74 +309,78 @@ class MainWindow(QWidget):
         self._apply_settings_to_ui()
 
     def _build_ui(self):
+        settings = load_settings()
+        lang = settings.language
+
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(18, 16, 18, 16)
         main_layout.setSpacing(10)
 
         # 1. Pasek Szablonów / Profili (Szybki Dostęp)
-        profile_group = QGroupBox("⭐ Szablony / Profile Szybkiego Dostępu")
-        profile_layout = QHBoxLayout(profile_group)
+        self.profile_group = QGroupBox(tr("group_profiles", lang))
+        profile_layout = QHBoxLayout(self.profile_group)
 
         self.combo_profiles = QComboBox()
         self.combo_profiles.setMinimumWidth(320)
         self.combo_profiles.currentIndexChanged.connect(self._on_profile_selected)
 
-        btn_save_profile = QPushButton("💾 Zapisz jako szablon...")
-        btn_save_profile.setToolTip("Zapisz aktualnie wybrane foldery A i B jako nazwany profil")
-        btn_save_profile.clicked.connect(self._save_current_as_profile)
+        self.btn_save_profile = QPushButton(tr("btn_save_profile", lang))
+        self.btn_save_profile.setToolTip(tr("btn_save_profile_tip", lang))
+        self.btn_save_profile.clicked.connect(self._save_current_as_profile)
 
-        btn_delete_profile = QPushButton("🗑️ Usuń szablon")
-        btn_delete_profile.setToolTip("Usuń obecnie wybrany szablon z listy")
-        btn_delete_profile.clicked.connect(self._delete_current_profile)
+        self.btn_delete_profile = QPushButton(tr("btn_delete_profile", lang))
+        self.btn_delete_profile.setToolTip(tr("btn_delete_profile_tip", lang))
+        self.btn_delete_profile.clicked.connect(self._delete_current_profile)
 
-        profile_layout.addWidget(QLabel("Wybierz szablon:"))
+        self.lbl_select_profile = QLabel(tr("lbl_select_profile", lang))
+        profile_layout.addWidget(self.lbl_select_profile)
         profile_layout.addWidget(self.combo_profiles)
-        profile_layout.addWidget(btn_save_profile)
-        profile_layout.addWidget(btn_delete_profile)
+        profile_layout.addWidget(self.btn_save_profile)
+        profile_layout.addWidget(self.btn_delete_profile)
         profile_layout.addStretch()
 
-        main_layout.addWidget(profile_group)
+        main_layout.addWidget(self.profile_group)
 
         # 2. Wybór katalogów A i B
-        dir_group = QGroupBox("Katalogi źródłowy i docelowy")
-        dir_layout = QGridLayout(dir_group)
+        self.dir_group = QGroupBox(tr("group_directories", lang))
+        dir_layout = QGridLayout(self.dir_group)
         dir_layout.setSpacing(8)
 
-        lbl_a = QLabel("Katalog A (Lewy):")
-        lbl_a.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
-        self.edit_dir_a = DropLineEdit("Wklej, wpisz lub przeciągnij tutaj folder A...")
-        btn_browse_a = QPushButton("Przeglądaj...")
-        btn_browse_a.clicked.connect(self._browse_a)
+        self.lbl_dir_a = QLabel(tr("lbl_dir_a", lang))
+        self.lbl_dir_a.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        self.edit_dir_a = DropLineEdit(tr("placeholder_dir_a", lang))
+        self.btn_browse_a = QPushButton(tr("btn_browse", lang))
+        self.btn_browse_a.clicked.connect(self._browse_a)
 
-        dir_layout.addWidget(lbl_a, 0, 0)
+        dir_layout.addWidget(self.lbl_dir_a, 0, 0)
         dir_layout.addWidget(self.edit_dir_a, 0, 1)
-        dir_layout.addWidget(btn_browse_a, 0, 2)
+        dir_layout.addWidget(self.btn_browse_a, 0, 2)
 
-        lbl_b = QLabel("Katalog B (Prawy):")
-        lbl_b.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
-        self.edit_dir_b = DropLineEdit("Wklej, wpisz lub przeciągnij tutaj folder B...")
-        btn_browse_b = QPushButton("Przeglądaj...")
-        btn_browse_b.clicked.connect(self._browse_b)
+        self.lbl_dir_b = QLabel(tr("lbl_dir_b", lang))
+        self.lbl_dir_b.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        self.edit_dir_b = DropLineEdit(tr("placeholder_dir_b", lang))
+        self.btn_browse_b = QPushButton(tr("btn_browse", lang))
+        self.btn_browse_b.clicked.connect(self._browse_b)
 
-        dir_layout.addWidget(lbl_b, 1, 0)
+        dir_layout.addWidget(self.lbl_dir_b, 1, 0)
         dir_layout.addWidget(self.edit_dir_b, 1, 1)
-        dir_layout.addWidget(btn_browse_b, 1, 2)
+        dir_layout.addWidget(self.btn_browse_b, 1, 2)
 
-        main_layout.addWidget(dir_group)
+        main_layout.addWidget(self.dir_group)
 
         # 3. Opcje porównywania i przycisk startowy
         opt_layout = QHBoxLayout()
-        self.chk_hash = QCheckBox("Głęboka weryfikacja sumą SHA-256 (dla 100% integralności)")
-        self.chk_hash.setToolTip("Oblicza kryptograficzną sumę SHA-256 każdego pliku, eliminując błędy daty")
+        self.chk_hash = QCheckBox(tr("chk_hash", lang))
+        self.chk_hash.setToolTip(tr("chk_hash_tip", lang))
         self.chk_hash.setChecked(False)
 
-        self.btn_compare = QPushButton("🔍 Porównaj zawartość katalogów")
+        self.btn_compare = QPushButton(tr("btn_compare", lang))
         self.btn_compare.setObjectName("primaryButton")
         self.btn_compare.setFixedHeight(36)
         self.btn_compare.clicked.connect(self._start_compare)
 
-        self.btn_dry_run = QPushButton("⚠️ Test na sucho (Dry-Run)")
-        self.btn_dry_run.setToolTip("Symuluj synchronizację BEZ modyfikowania plików na dysku")
+        self.btn_dry_run = QPushButton(tr("btn_dry_run", lang))
+        self.btn_dry_run.setToolTip(tr("btn_dry_run_tip", lang))
         self.btn_dry_run.setFixedHeight(36)
         self.btn_dry_run.setEnabled(False)
         self.btn_dry_run.clicked.connect(self._start_dry_run)
@@ -564,53 +396,40 @@ class MainWindow(QWidget):
         self.progress_bar.setVisible(False)
         main_layout.addWidget(self.progress_bar)
 
-        self.lbl_status = QLabel("Wybierz szablon lub dwa foldery i kliknij „Porównaj zawartość”. Kliknij nagłówek tabeli, aby sortować.")
-        self.lbl_status.setStyleSheet("color: #AAAAAA;")
+        self.lbl_status = QLabel(tr("lbl_status_initial", lang))
+        self.lbl_status.setStyleSheet("color: #888888;")
         main_layout.addWidget(self.lbl_status)
 
         # 4. Pasek filtrów i szybkich akcji
         filter_layout = QHBoxLayout()
-        filter_layout.addWidget(QLabel("Filtruj widok:"))
+        self.lbl_filter = QLabel(tr("lbl_filter", lang))
+        filter_layout.addWidget(self.lbl_filter)
 
         self.combo_filter = QComboBox()
-        self.combo_filter.addItems([
-            "Wszystkie pliki",
-            "Tylko różniące się (wymagające uwagi)",
-            "Nowszy w Katalogu A",
-            "Nowszy w Katalogu B",
-            "Tylko w A lub tylko w B",
-            "Identyczne",
-        ])
+        self._populate_filter_combo(lang)
         self.combo_filter.currentIndexChanged.connect(self._apply_filter)
         filter_layout.addWidget(self.combo_filter)
 
         self.edit_search = QLineEdit()
-        self.edit_search.setPlaceholderText("Szukaj po nazwie / ścieżce...")
+        self.edit_search.setPlaceholderText(tr("placeholder_search", lang))
         self.edit_search.textChanged.connect(self._apply_filter)
         filter_layout.addWidget(self.edit_search)
 
         filter_layout.addStretch()
 
-        btn_select_all = QPushButton("Zaznacz widoczne")
-        btn_select_all.clicked.connect(lambda: self._set_all_visible_checked(True))
-        btn_deselect_all = QPushButton("Odznacz wszystkie")
-        btn_deselect_all.clicked.connect(lambda: self._set_all_visible_checked(False))
-        filter_layout.addWidget(btn_select_all)
-        filter_layout.addWidget(btn_deselect_all)
+        self.btn_select_all = QPushButton(tr("btn_select_all", lang))
+        self.btn_select_all.clicked.connect(lambda: self._set_all_visible_checked(True))
+        self.btn_deselect_all = QPushButton(tr("btn_deselect_all", lang))
+        self.btn_deselect_all.clicked.connect(lambda: self._set_all_visible_checked(False))
+        filter_layout.addWidget(self.btn_select_all)
+        filter_layout.addWidget(self.btn_deselect_all)
 
         main_layout.addLayout(filter_layout)
 
         # 5. Tabela wyników porównania z obsługą sortowania i menu kontekstowego
         self.table = QTableWidget()
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels([
-            "Wybór",
-            "Status",
-            "Względna ścieżka pliku",
-            "Rozmiar A / B",
-            "Data modyfikacji A",
-            "Data modyfikacji B",
-        ])
+        self._set_table_headers(lang)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
@@ -631,64 +450,100 @@ class MainWindow(QWidget):
         main_layout.addWidget(self.table)
 
         # 6. Panel dolny: Synchronizacja i Ochrona Danych
-        sync_group = QGroupBox("Synchronizacja i Ochrona Danych")
-        sync_layout = QHBoxLayout(sync_group)
+        self.sync_group = QGroupBox(tr("group_sync", lang))
+        sync_layout = QHBoxLayout(self.sync_group)
 
-        self.chk_backup = QCheckBox("Twórz kopię zapasową (.backup) przed zastąpieniem pliku")
+        self.chk_backup = QCheckBox(tr("chk_backup", lang))
         self.chk_backup.setChecked(True)
-        self.chk_backup.setToolTip("Rekomendowane przez procedury bezpieczeństwa: zachowuje kopię pliku przed nadpisaniem")
+        self.chk_backup.setToolTip(tr("chk_backup_tip", lang))
 
         self.combo_sync_mode = QComboBox()
-        self.combo_sync_mode.addItem(SyncDirection.UPDATE_OLDER.display_name, SyncDirection.UPDATE_OLDER)
-        self.combo_sync_mode.addItem(SyncDirection.COPY_A_TO_B.display_name, SyncDirection.COPY_A_TO_B)
-        self.combo_sync_mode.addItem(SyncDirection.COPY_B_TO_A.display_name, SyncDirection.COPY_B_TO_A)
+        self._populate_sync_modes(lang)
 
-        self.btn_sync = QPushButton("⚡ Zsynchronizuj zaznaczone pliki")
+        self.btn_sync = QPushButton(tr("btn_sync", lang))
         self.btn_sync.setObjectName("syncButton")
         self.btn_sync.setEnabled(False)
         self.btn_sync.clicked.connect(self._start_sync)
 
+        self.lbl_sync_mode = QLabel(tr("lbl_sync_mode", lang))
         sync_layout.addWidget(self.chk_backup)
         sync_layout.addSpacing(20)
-        sync_layout.addWidget(QLabel("Tryb:"))
+        sync_layout.addWidget(self.lbl_sync_mode)
         sync_layout.addWidget(self.combo_sync_mode)
         sync_layout.addStretch()
         sync_layout.addWidget(self.btn_sync)
 
-        main_layout.addWidget(sync_group)
+        main_layout.addWidget(self.sync_group)
 
         # 7. Pasek narzędzi dolny: Historia, Eksport, Backup Manager, Ustawienia
         tools_layout = QHBoxLayout()
 
-        btn_history = QPushButton("📜 Historia porównań")
-        btn_history.setToolTip("Przeglądaj historię porównań i synchronizacji")
-        btn_history.clicked.connect(self._open_history)
-        tools_layout.addWidget(btn_history)
+        self.btn_history = QPushButton(tr("btn_history", lang))
+        self.btn_history.setToolTip(tr("btn_history_tip", lang))
+        self.btn_history.clicked.connect(self._open_history)
+        tools_layout.addWidget(self.btn_history)
 
-        btn_export_html = QPushButton("📄 Eksport HTML")
-        btn_export_html.setToolTip("Eksportuj wyniki do pliku HTML")
-        btn_export_html.clicked.connect(lambda: self._export_report("html"))
-        tools_layout.addWidget(btn_export_html)
+        self.btn_export_html = QPushButton(tr("btn_export_html", lang))
+        self.btn_export_html.setToolTip(tr("btn_export_html_tip", lang))
+        self.btn_export_html.clicked.connect(lambda: self._export_report("html"))
+        tools_layout.addWidget(self.btn_export_html)
 
-        btn_export_csv = QPushButton("📊 Eksport CSV")
-        btn_export_csv.setToolTip("Eksportuj wyniki do pliku CSV (Excel, LibreOffice)")
-        btn_export_csv.clicked.connect(lambda: self._export_report("csv"))
-        tools_layout.addWidget(btn_export_csv)
+        self.btn_export_csv = QPushButton(tr("btn_export_csv", lang))
+        self.btn_export_csv.setToolTip(tr("btn_export_csv_tip", lang))
+        self.btn_export_csv.clicked.connect(lambda: self._export_report("csv"))
+        tools_layout.addWidget(self.btn_export_csv)
 
-        btn_backup_mgr = QPushButton("⏪ Kopie zapasowe")
-        btn_backup_mgr.setToolTip("Zarządzaj katalogami .backup, wykonaj Rollback")
-        btn_backup_mgr.clicked.connect(self._open_backup_manager)
-        tools_layout.addWidget(btn_backup_mgr)
+        self.btn_backup_mgr = QPushButton(tr("btn_backup_mgr", lang))
+        self.btn_backup_mgr.setToolTip(tr("btn_backup_mgr_tip", lang))
+        self.btn_backup_mgr.clicked.connect(self._open_backup_manager)
+        tools_layout.addWidget(self.btn_backup_mgr)
 
         tools_layout.addStretch()
 
-        btn_settings = QPushButton("⚙️ Ustawienia")
-        btn_settings.setToolTip("Otwórz ustawienia aplikacji (Ctrl+,)")
-        btn_settings.clicked.connect(self._open_settings)
-        btn_settings.setShortcut(QKeySequence("Ctrl+,"))
-        tools_layout.addWidget(btn_settings)
+        self.btn_settings = QPushButton(tr("btn_settings", lang))
+        self.btn_settings.setToolTip(tr("btn_settings_tip", lang))
+        self.btn_settings.clicked.connect(self._open_settings)
+        self.btn_settings.setShortcut(QKeySequence("Ctrl+,"))
+        tools_layout.addWidget(self.btn_settings)
 
         main_layout.addLayout(tools_layout)
+
+    def _populate_filter_combo(self, lang: str):
+        curr = self.combo_filter.currentIndex() if hasattr(self, "combo_filter") and self.combo_filter.count() > 0 else 0
+        self.combo_filter.blockSignals(True)
+        self.combo_filter.clear()
+        self.combo_filter.addItems([
+            tr("filter_all", lang),
+            tr("filter_diff_only", lang),
+            tr("filter_newer_a", lang),
+            tr("filter_newer_b", lang),
+            tr("filter_only_a_b", lang),
+            tr("filter_identical", lang),
+        ])
+        if 0 <= curr < self.combo_filter.count():
+            self.combo_filter.setCurrentIndex(curr)
+        self.combo_filter.blockSignals(False)
+
+    def _set_table_headers(self, lang: str):
+        self.table.setHorizontalHeaderLabels([
+            tr("col_select", lang),
+            tr("col_status", lang),
+            tr("col_rel_path", lang),
+            tr("col_size", lang),
+            tr("col_mtime_a", lang),
+            tr("col_mtime_b", lang),
+        ])
+
+    def _populate_sync_modes(self, lang: str):
+        curr = self.combo_sync_mode.currentIndex() if hasattr(self, "combo_sync_mode") and self.combo_sync_mode.count() > 0 else 0
+        self.combo_sync_mode.blockSignals(True)
+        self.combo_sync_mode.clear()
+        self.combo_sync_mode.addItem(tr("sync_mode_update", lang), SyncDirection.UPDATE_OLDER)
+        self.combo_sync_mode.addItem(tr("sync_mode_a_to_b", lang), SyncDirection.COPY_A_TO_B)
+        self.combo_sync_mode.addItem(tr("sync_mode_b_to_a", lang), SyncDirection.COPY_B_TO_A)
+        if 0 <= curr < self.combo_sync_mode.count():
+            self.combo_sync_mode.setCurrentIndex(curr)
+        self.combo_sync_mode.blockSignals(False)
 
     # ================= Menedżer Szablonów / Profili =================
 
@@ -888,6 +743,8 @@ class MainWindow(QWidget):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(self.current_items))
 
+        lang = load_settings().language
+
         status_weights = {
             FileStatus.ERROR: 0,
             FileStatus.DIFFERENT_CONTENT: 1,
@@ -922,7 +779,9 @@ class MainWindow(QWidget):
 
             # Kolumna 1: Status z wagą sortowania
             s_weight = status_weights.get(item.status, 99)
-            status_item = SortableTableWidgetItem(item.status.display_name, sort_key=s_weight)
+            status_text = get_status_display_name(item.status, lang)
+            status_item = SortableTableWidgetItem(status_text, sort_key=s_weight)
+            status_item.setData(Qt.ItemDataRole.UserRole, item)
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._apply_status_style(status_item, item.status)
             self.table.setItem(row, 1, status_item)
@@ -962,27 +821,11 @@ class MainWindow(QWidget):
         font.setBold(True)
         table_item.setFont(font)
 
-        if status == FileStatus.NEWER_A:
-            table_item.setBackground(QColor("#1B5E20"))
-            table_item.setForeground(QColor("#C8E6C9"))
-        elif status == FileStatus.NEWER_B:
-            table_item.setBackground(QColor("#0D47A1"))
-            table_item.setForeground(QColor("#BBDEFB"))
-        elif status == FileStatus.ONLY_A:
-            table_item.setBackground(QColor("#4A148C"))
-            table_item.setForeground(QColor("#E1BEE7"))
-        elif status == FileStatus.ONLY_B:
-            table_item.setBackground(QColor("#BF360C"))
-            table_item.setForeground(QColor("#FFE0B2"))
-        elif status == FileStatus.DIFFERENT_CONTENT:
-            table_item.setBackground(QColor("#E65100"))
-            table_item.setForeground(QColor("#FFFFFF"))
-        elif status == FileStatus.ERROR:
-            table_item.setBackground(QColor("#B71C1C"))
-            table_item.setForeground(QColor("#FFCDD2"))
-        else:
-            table_item.setBackground(QColor("#2C3437"))
-            table_item.setForeground(QColor("#B0BEC5"))
+        settings = load_settings()
+        is_dark = is_dark_theme_active(settings.theme)
+        bg, fg = get_status_colors(status, is_dark)
+        table_item.setBackground(bg)
+        table_item.setForeground(fg)
 
     def _format_size(self, size_bytes: Optional[int]) -> str:
         if size_bytes is None:
@@ -1292,12 +1135,111 @@ class MainWindow(QWidget):
         from gui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self)
         dlg.exec()
-        # Odśwież UI po zapisaniu ustawień
+        # Odśwież UI po zapisaniu ustawień (motyw, język, parametry)
         self._apply_settings_to_ui()
 
+    def _update_ui_language(self, lang: str):
+        """Aktualizuje wszystkie etykiety, przyciski i teksty w oknie na wskazany język."""
+        self.setWindowTitle(tr("window_title", lang))
+
+        if hasattr(self, "profile_group"):
+            self.profile_group.setTitle(tr("group_profiles", lang))
+        if hasattr(self, "lbl_select_profile"):
+            self.lbl_select_profile.setText(tr("lbl_select_profile", lang))
+        if hasattr(self, "btn_save_profile"):
+            self.btn_save_profile.setText(tr("btn_save_profile", lang))
+            self.btn_save_profile.setToolTip(tr("btn_save_profile_tip", lang))
+        if hasattr(self, "btn_delete_profile"):
+            self.btn_delete_profile.setText(tr("btn_delete_profile", lang))
+            self.btn_delete_profile.setToolTip(tr("btn_delete_profile_tip", lang))
+
+        if hasattr(self, "dir_group"):
+            self.dir_group.setTitle(tr("group_directories", lang))
+        if hasattr(self, "lbl_dir_a"):
+            self.lbl_dir_a.setText(tr("lbl_dir_a", lang))
+        if hasattr(self, "edit_dir_a"):
+            self.edit_dir_a.setPlaceholderText(tr("placeholder_dir_a", lang))
+        if hasattr(self, "btn_browse_a"):
+            self.btn_browse_a.setText(tr("btn_browse", lang))
+        if hasattr(self, "lbl_dir_b"):
+            self.lbl_dir_b.setText(tr("lbl_dir_b", lang))
+        if hasattr(self, "edit_dir_b"):
+            self.edit_dir_b.setPlaceholderText(tr("placeholder_dir_b", lang))
+        if hasattr(self, "btn_browse_b"):
+            self.btn_browse_b.setText(tr("btn_browse", lang))
+
+        if hasattr(self, "chk_hash"):
+            self.chk_hash.setText(tr("chk_hash", lang))
+            self.chk_hash.setToolTip(tr("chk_hash_tip", lang))
+        if hasattr(self, "btn_compare"):
+            self.btn_compare.setText(tr("btn_compare", lang))
+        if hasattr(self, "btn_dry_run"):
+            self.btn_dry_run.setText(tr("btn_dry_run", lang))
+            self.btn_dry_run.setToolTip(tr("btn_dry_run_tip", lang))
+
+        if hasattr(self, "lbl_filter"):
+            self.lbl_filter.setText(tr("lbl_filter", lang))
+        if hasattr(self, "combo_filter"):
+            self._populate_filter_combo(lang)
+        if hasattr(self, "edit_search"):
+            self.edit_search.setPlaceholderText(tr("placeholder_search", lang))
+        if hasattr(self, "btn_select_all"):
+            self.btn_select_all.setText(tr("btn_select_all", lang))
+        if hasattr(self, "btn_deselect_all"):
+            self.btn_deselect_all.setText(tr("btn_deselect_all", lang))
+
+        if hasattr(self, "table"):
+            self._set_table_headers(lang)
+
+        if hasattr(self, "sync_group"):
+            self.sync_group.setTitle(tr("group_sync", lang))
+        if hasattr(self, "chk_backup"):
+            self.chk_backup.setText(tr("chk_backup", lang))
+            self.chk_backup.setToolTip(tr("chk_backup_tip", lang))
+        if hasattr(self, "lbl_sync_mode"):
+            self.lbl_sync_mode.setText(tr("lbl_sync_mode", lang))
+        if hasattr(self, "combo_sync_mode"):
+            self._populate_sync_modes(lang)
+        if hasattr(self, "btn_sync"):
+            self.btn_sync.setText(tr("btn_sync", lang))
+
+        if hasattr(self, "btn_history"):
+            self.btn_history.setText(tr("btn_history", lang))
+            self.btn_history.setToolTip(tr("btn_history_tip", lang))
+        if hasattr(self, "btn_export_html"):
+            self.btn_export_html.setText(tr("btn_export_html", lang))
+            self.btn_export_html.setToolTip(tr("btn_export_html_tip", lang))
+        if hasattr(self, "btn_export_csv"):
+            self.btn_export_csv.setText(tr("btn_export_csv", lang))
+            self.btn_export_csv.setToolTip(tr("btn_export_csv_tip", lang))
+        if hasattr(self, "btn_backup_mgr"):
+            self.btn_backup_mgr.setText(tr("btn_backup_mgr", lang))
+            self.btn_backup_mgr.setToolTip(tr("btn_backup_mgr_tip", lang))
+        if hasattr(self, "btn_settings"):
+            self.btn_settings.setText(tr("btn_settings", lang))
+            self.btn_settings.setToolTip(tr("btn_settings_tip", lang))
+
+    def _refresh_table_visuals(self, is_dark: bool, lang: str):
+        """Aktualizuje kolory i etykiety statusów w istniejących wierszach tabeli."""
+        if not hasattr(self, "table"):
+            return
+        for row in range(self.table.rowCount()):
+            status_item = self.table.item(row, 1)
+            path_item = self.table.item(row, 2)
+            if not status_item or not path_item:
+                continue
+            item: Optional[ComparisonItem] = path_item.data(Qt.ItemDataRole.UserRole)
+            if item:
+                status_item.setText(get_status_display_name(item.status, lang))
+                self._apply_status_style(status_item, item.status)
+
     def _apply_settings_to_ui(self):
-        """Stosuje ustawienia z pliku konfiguracyjnego do elementów UI."""
+        """Stosuje motyw, język oraz preferencje z pliku konfiguracyjnego."""
         settings = load_settings()
+        is_dark = apply_theme_to_app(settings.theme, self)
+        self._update_ui_language(settings.language)
+        self._refresh_table_visuals(is_dark, settings.language)
+
         sync_map = {"UPDATE_OLDER": 0, "COPY_A_TO_B": 1, "COPY_B_TO_A": 2}
         idx = sync_map.get(settings.default_sync_mode, 0)
         self.combo_sync_mode.setCurrentIndex(idx)
