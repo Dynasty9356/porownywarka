@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "I:\Mˇj dysk\0moje programy\porownywarka\main.py", line 6, in <module>
+    from PyQt6.QtCore import Qt
+ModuleNotFoundError: No module named 'PyQt6'
