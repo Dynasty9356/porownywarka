@@ -6,6 +6,7 @@ from pathlib import Path
 import csv
 
 from core.comparator import ComparisonItem, FileStatus
+from core.version import APP_NAME, __version__
 
 
 def export_html(
@@ -108,7 +109,7 @@ def export_html(
 </table>
 
 <div class="footer">
-  Wygenerowano przez FolderSync v1.2.0 | {now} | Suma SHA-256 weryfikuje integralność danych.
+  Wygenerowano przez {APP_NAME} v{__version__} | {now} | Suma SHA-256 weryfikuje integralność danych.
 </div>
 </body>
 </html>"""

@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.settings import load_settings
+from core.synchronizer import safe_restore_file
 from gui.themes import get_theme_stylesheet, is_dark_theme_active
 
 def _find_backup_dirs(base_dirs: list[Path]) -> list[dict]:
@@ -174,8 +175,9 @@ class BackupManagerDialog(QDialog):
             try:
                 rel = src_file.relative_to(src_root)
                 dst_file = dst_root / rel
-                dst_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(src_file), str(dst_file))
+                ok, err = safe_restore_file(src_file, dst_file, verify_sha256=True)
+                if not ok:
+                    errors.append(f"{rel}: {err}")
             except Exception as e:
                 errors.append(str(e))
 
@@ -184,7 +186,7 @@ class BackupManagerDialog(QDialog):
                                 f"Przywrócono z błędami:\n" + "\n".join(errors[:10]))
         else:
             QMessageBox.information(self, "Rollback zakończony",
-                                    f"✅ Pliki zostały przywrócone pomyślnie z:\n{bk['path']}")
+                                    f"✅ Pliki zostały przywrócone pomyślnie z weryfikacją SHA-256 z:\n{bk['path']}")
 
     def _delete_selected(self):
         sel = self._table.currentRow()

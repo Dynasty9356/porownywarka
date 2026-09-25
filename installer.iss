@@ -2,7 +2,7 @@
 ; Zgodny ze standardami instalacji Windows 11
 
 #define MyAppName "FolderSync"
-#define MyAppVersion "1.2.1"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "FolderSync Security Tools"
 #define MyAppURL "https://github.com/foldersync"
 #define MyAppExeName "FolderSync.exe"

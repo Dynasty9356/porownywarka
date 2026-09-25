@@ -43,11 +43,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.comparator import ComparisonItem, FileStatus, calculate_sha256, compare_directories
+from core.comparator import (
+    ComparisonItem,
+    FileStatus,
+    OperationCancelledError,
+    calculate_sha256,
+    compare_directories,
+    validate_safe_directory_path,
+)
 from core.history import HistoryEntry, append_history_entry, make_entry_id
 from core.profiles import SyncProfile, delete_profile, load_profiles, save_profile
 from core.settings import load_settings
 from core.i18n import tr, get_status_display_name
+from gui.about_dialog import AboutDialog
 from gui.themes import (
     apply_theme_to_app,
     get_status_colors,
@@ -79,6 +87,7 @@ class SortableTableWidgetItem(QTableWidgetItem):
 class CompareWorker(QThread):
     progress = pyqtSignal(int, int, str)
     finished = pyqtSignal(list)
+    cancelled = pyqtSignal()
     error = pyqtSignal(str)
 
     def __init__(self, dir_a: Path, dir_b: Path, compare_hashes: bool,
@@ -88,6 +97,10 @@ class CompareWorker(QThread):
         self.dir_b = dir_b
         self.compare_hashes = compare_hashes
         self.exclude_patterns = exclude_patterns or []
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
 
     def run(self):
         try:
@@ -97,8 +110,11 @@ class CompareWorker(QThread):
                 compare_hashes=self.compare_hashes,
                 progress_callback=lambda cur, tot, name: self.progress.emit(cur, tot, name),
                 exclude_patterns=self.exclude_patterns,
+                cancel_token=lambda: self._is_cancelled,
             )
             self.finished.emit(results)
+        except OperationCancelledError:
+            self.cancelled.emit()
         except Exception as e:
             self.error.emit(str(e))
 
@@ -106,6 +122,7 @@ class CompareWorker(QThread):
 class SyncWorker(QThread):
     progress = pyqtSignal(int, int, str)
     finished = pyqtSignal(object)
+    cancelled = pyqtSignal()
     error = pyqtSignal(str)
 
     def __init__(self, actions: list[SyncAction], create_backup: bool,
@@ -115,6 +132,10 @@ class SyncWorker(QThread):
         self.create_backup = create_backup
         self.verify_sha256 = verify_sha256
         self.dry_run = dry_run
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
 
     def run(self):
         try:
@@ -124,8 +145,12 @@ class SyncWorker(QThread):
                 verify_sha256=self.verify_sha256,
                 progress_callback=lambda cur, tot, name: self.progress.emit(cur, tot, name),
                 dry_run=self.dry_run,
+                cancel_token=lambda: self._is_cancelled,
             )
-            self.finished.emit(report)
+            if report.cancelled:
+                self.cancelled.emit()
+            else:
+                self.finished.emit(report)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -220,8 +245,9 @@ class ConfirmSyncDialog(QDialog):
         self.setStyleSheet(get_theme_stylesheet(theme))
 
         total = len(actions)
-        overwrites = sum(1 for a in actions if a.will_overwrite)
-        new_files = total - overwrites
+        deletions = sum(1 for a in actions if getattr(a, "is_delete", False))
+        overwrites = sum(1 for a in actions if a.will_overwrite and not getattr(a, "is_delete", False))
+        new_files = total - overwrites - deletions
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
@@ -234,16 +260,18 @@ class ConfirmSyncDialog(QDialog):
         title.setStyleSheet(f"color: {title_color};")
         layout.addWidget(title)
 
+        del_txt = f"\n  • Pliki nieobecne w A (zostaną <b>USUNIĘTE z B</b>): <font color='#FF5555'><b>{deletions}</b></font>" if deletions else ""
         info_text = (
             f"Za chwilę zostanie wykonana synchronizacja plików według wybranego planu:\n\n"
             f"  • Łączna liczba operacji: <b>{total}</b>\n"
             f"  • Pliki nowe (zostaną utworzone): <b>{new_files}</b>\n"
-            f"  • Pliki istniejące (zostaną <b>NAD PISANE</b>): <b>{overwrites}</b>\n\n"
+            f"  • Pliki istniejące (zostaną <b>NADPISANE</b>): <b>{overwrites}</b>"
+            f"{del_txt}\n\n"
         )
         if create_backup:
             info_text += (
                 "🛡️ <b>Aktywna ochrona danych:</b> Zostanie utworzona automatyczna kopia zapasowa (.backup) "
-                "każdego nadpisywanego pliku z pełną weryfikacją sumy SHA-256."
+                "każdego nadpisywanego oraz usuwanego pliku z pełną weryfikacją sumy SHA-256."
             )
         else:
             info_text += (
@@ -385,10 +413,17 @@ class MainWindow(QWidget):
         self.btn_dry_run.setEnabled(False)
         self.btn_dry_run.clicked.connect(self._start_dry_run)
 
+        self.btn_stop = QPushButton(tr("btn_stop", lang))
+        self.btn_stop.setFixedHeight(36)
+        self.btn_stop.setVisible(False)
+        self.btn_stop.setStyleSheet("background-color: #A80000; color: #FFFFFF; font-weight: bold; border-radius: 6px;")
+        self.btn_stop.clicked.connect(self._stop_current_operation)
+
         opt_layout.addWidget(self.chk_hash)
         opt_layout.addStretch()
         opt_layout.addWidget(self.btn_dry_run)
         opt_layout.addWidget(self.btn_compare)
+        opt_layout.addWidget(self.btn_stop)
         main_layout.addLayout(opt_layout)
 
         # Pasek postępu operacji
@@ -425,6 +460,36 @@ class MainWindow(QWidget):
         filter_layout.addWidget(self.btn_deselect_all)
 
         main_layout.addLayout(filter_layout)
+
+        # Dashboard podsumowania (Karty statystyk z bezpośrednim filtrowaniem)
+        self.dashboard_layout = QHBoxLayout()
+        self.dashboard_layout.setSpacing(8)
+
+        self.card_all = QPushButton(f"{tr('card_total', lang)}: 0")
+        self.card_diff = QPushButton(f"{tr('card_diff', lang)}: 0")
+        self.card_newer_a = QPushButton(f"{tr('card_newer_a', lang)}: 0")
+        self.card_newer_b = QPushButton(f"{tr('card_newer_b', lang)}: 0")
+        self.card_only_ab = QPushButton(f"{tr('filter_only_a_b', lang)}: 0")
+        self.card_identical = QPushButton(f"{tr('card_identical', lang)}: 0")
+
+        cards = [
+            (self.card_all, 0, "#0078D4"),
+            (self.card_diff, 1, "#D83B01"),
+            (self.card_newer_a, 2, "#107C10"),
+            (self.card_newer_b, 3, "#005FB8"),
+            (self.card_only_ab, 4, "#8E562E"),
+            (self.card_identical, 5, "#4F6B72"),
+        ]
+        for btn, f_idx, col in cards:
+            btn.setFixedHeight(30)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(
+                f"border: 1px solid {col}; border-radius: 6px; padding: 4px 8px; font-weight: 600;"
+            )
+            btn.clicked.connect(lambda checked=False, idx=f_idx: self.combo_filter.setCurrentIndex(idx))
+            self.dashboard_layout.addWidget(btn)
+
+        main_layout.addLayout(self.dashboard_layout)
 
         # 5. Tabela wyników porównania z obsługą sortowania i menu kontekstowego
         self.table = QTableWidget()
@@ -500,6 +565,10 @@ class MainWindow(QWidget):
 
         tools_layout.addStretch()
 
+        self.btn_about = QPushButton(tr("btn_about", lang))
+        self.btn_about.clicked.connect(self._open_about)
+        tools_layout.addWidget(self.btn_about)
+
         self.btn_settings = QPushButton(tr("btn_settings", lang))
         self.btn_settings.setToolTip(tr("btn_settings_tip", lang))
         self.btn_settings.clicked.connect(self._open_settings)
@@ -541,6 +610,7 @@ class MainWindow(QWidget):
         self.combo_sync_mode.addItem(tr("sync_mode_update", lang), SyncDirection.UPDATE_OLDER)
         self.combo_sync_mode.addItem(tr("sync_mode_a_to_b", lang), SyncDirection.COPY_A_TO_B)
         self.combo_sync_mode.addItem(tr("sync_mode_b_to_a", lang), SyncDirection.COPY_B_TO_A)
+        self.combo_sync_mode.addItem(tr("sync_mode_mirror", lang), SyncDirection.MIRROR_A_TO_B)
         if 0 <= curr < self.combo_sync_mode.count():
             self.combo_sync_mode.setCurrentIndex(curr)
         self.combo_sync_mode.blockSignals(False)
@@ -654,9 +724,42 @@ class MainWindow(QWidget):
         if path:
             self.edit_dir_b.setText(path)
 
+    def _open_about(self):
+        dlg = AboutDialog(self)
+        dlg.exec()
+
+    def _stop_current_operation(self):
+        self.btn_stop.setEnabled(False)
+        self.lbl_status.setText("Zatrzymywanie operacji...")
+        if self.compare_thread and self.compare_thread.isRunning():
+            self.compare_thread.cancel()
+        if self.sync_thread and self.sync_thread.isRunning():
+            self.sync_thread.cancel()
+
+    def _on_operation_cancelled(self):
+        self.progress_bar.setVisible(False)
+        self.btn_stop.setVisible(False)
+        self.btn_compare.setEnabled(True)
+        self.btn_sync.setEnabled(len(self.current_items) > 0)
+        self.btn_dry_run.setEnabled(len(self.current_items) > 0)
+        lang = load_settings().language
+        self.lbl_status.setText(tr("msg_op_cancelled", lang))
+        QMessageBox.information(self, "Operacja przerwana", tr("msg_op_cancelled", lang))
+
     def _start_compare(self):
-        path_a = Path(self.edit_dir_a.text().strip())
-        path_b = Path(self.edit_dir_b.text().strip())
+        raw_a = self.edit_dir_a.text().strip()
+        raw_b = self.edit_dir_b.text().strip()
+
+        if not validate_safe_directory_path(raw_a) or not validate_safe_directory_path(raw_b):
+            QMessageBox.critical(
+                self,
+                "Odrzucono niebezpieczną ścieżkę",
+                "Wykryto niebezpieczną lub nieprawidłową ścieżkę katalogu (ochrona CERT/NASA).",
+            )
+            return
+
+        path_a = Path(raw_a)
+        path_b = Path(raw_b)
 
         if not path_a.is_dir() or not path_b.is_dir():
             QMessageBox.warning(
@@ -669,6 +772,8 @@ class MainWindow(QWidget):
         self.btn_compare.setEnabled(False)
         self.btn_sync.setEnabled(False)
         self.btn_dry_run.setEnabled(False)
+        self.btn_stop.setVisible(True)
+        self.btn_stop.setEnabled(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.lbl_status.setText("Skanowanie i porównywanie plików w toku...")
@@ -681,6 +786,7 @@ class MainWindow(QWidget):
         )
         self.compare_thread.progress.connect(self._on_compare_progress)
         self.compare_thread.finished.connect(self._on_compare_finished)
+        self.compare_thread.cancelled.connect(self._on_operation_cancelled)
         self.compare_thread.error.connect(self._on_compare_error)
         self.compare_thread.start()
 
@@ -693,6 +799,7 @@ class MainWindow(QWidget):
     def _on_compare_finished(self, items: list[ComparisonItem]):
         self.current_items = items
         self.progress_bar.setVisible(False)
+        self.btn_stop.setVisible(False)
         self.btn_compare.setEnabled(True)
         self.btn_dry_run.setEnabled(True)
 
@@ -705,6 +812,14 @@ class MainWindow(QWidget):
         only_a = sum(1 for it in items if it.status == FileStatus.ONLY_A)
         only_b = sum(1 for it in items if it.status == FileStatus.ONLY_B)
         identical = sum(1 for it in items if it.status == FileStatus.IDENTICAL)
+
+        lang = load_settings().language
+        self.card_all.setText(f"{tr('card_total', lang)}: {total}")
+        self.card_diff.setText(f"{tr('card_diff', lang)}: {diff_count}")
+        self.card_newer_a.setText(f"{tr('card_newer_a', lang)}: {newer_a}")
+        self.card_newer_b.setText(f"{tr('card_newer_b', lang)}: {newer_b}")
+        self.card_only_ab.setText(f"{tr('filter_only_a_b', lang)}: {only_a + only_b}")
+        self.card_identical.setText(f"{tr('card_identical', lang)}: {identical}")
 
         self.lbl_status.setText(
             f"Zakończono: Łącznie: {total} | Różniących się: {diff_count} "
@@ -732,6 +847,7 @@ class MainWindow(QWidget):
 
     def _on_compare_error(self, err_msg: str):
         self.progress_bar.setVisible(False)
+        self.btn_stop.setVisible(False)
         self.btn_compare.setEnabled(True)
         self.lbl_status.setText("Wystąpił błąd podczas porównywania.")
         QMessageBox.critical(self, "Błąd porównywania", f"Operacja nie powiodła się:\n{err_msg}")
@@ -980,6 +1096,9 @@ class MainWindow(QWidget):
 
         self.btn_compare.setEnabled(False)
         self.btn_sync.setEnabled(False)
+        self.btn_dry_run.setEnabled(False)
+        self.btn_stop.setVisible(True)
+        self.btn_stop.setEnabled(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.lbl_status.setText("Synchronizowanie plików...")
@@ -991,6 +1110,7 @@ class MainWindow(QWidget):
         )
         self.sync_thread.progress.connect(self._on_sync_progress)
         self.sync_thread.finished.connect(self._on_sync_finished)
+        self.sync_thread.cancelled.connect(self._on_operation_cancelled)
         self.sync_thread.error.connect(self._on_sync_error)
         self.sync_thread.start()
 
@@ -1002,6 +1122,7 @@ class MainWindow(QWidget):
 
     def _on_sync_finished(self, report: SyncReport):
         self.progress_bar.setVisible(False)
+        self.btn_stop.setVisible(False)
         self.btn_compare.setEnabled(True)
 
         summary_msg = report.summary()
@@ -1013,7 +1134,6 @@ class MainWindow(QWidget):
         else:
             QMessageBox.information(self, "Raport Końcowy Synchronizacji", summary_msg)
             # Aktualizuj historię o status synchronizacji
-            entries = __import__('core.history', fromlist=['load_history', 'save_history'])
             from core.history import load_history, save_history
             history = load_history()
             for e in history:
@@ -1029,6 +1149,7 @@ class MainWindow(QWidget):
 
     def _on_sync_error(self, err_msg: str):
         self.progress_bar.setVisible(False)
+        self.btn_stop.setVisible(False)
         self.btn_compare.setEnabled(True)
         self.btn_sync.setEnabled(True)
         QMessageBox.critical(self, "Błąd synchronizacji", f"Wystąpił błąd:\n{err_msg}")

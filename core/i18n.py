@@ -181,6 +181,62 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pl": "Kopiuj wybrane z Katalogu B do A",
         "en": "Copy selected from B to A",
     },
+    "sync_mode_mirror": {
+        "pl": "Kopia lustrzana A -> B (usuwaj z B pliki nieistniejące w A)",
+        "en": "Mirror A -> B (delete files from B that do not exist in A)",
+    },
+    "btn_stop": {
+        "pl": "⏹ Zatrzymaj operację",
+        "en": "⏹ Stop operation",
+    },
+    "btn_about": {
+        "pl": "ℹ️ O programie",
+        "en": "ℹ️ About",
+    },
+    "about_title": {
+        "pl": "O programie FolderSync",
+        "en": "About FolderSync",
+    },
+    "msg_op_cancelled": {
+        "pl": "Operacja została pomyślnie i bezpiecznie przerwana.",
+        "en": "Operation was successfully and safely cancelled.",
+    },
+    "col_sha256": {
+        "pl": "Suma SHA-256",
+        "en": "SHA-256 Hash",
+    },
+    "card_total": {
+        "pl": "Wszystkie",
+        "en": "All",
+    },
+    "card_diff": {
+        "pl": "Różniące się",
+        "en": "Differences",
+    },
+    "card_newer_a": {
+        "pl": "Nowsze w A",
+        "en": "Newer in A",
+    },
+    "card_newer_b": {
+        "pl": "Nowsze w B",
+        "en": "Newer in B",
+    },
+    "card_only_a": {
+        "pl": "Tylko w A",
+        "en": "Only in A",
+    },
+    "card_only_b": {
+        "pl": "Tylko w B",
+        "en": "Only in B",
+    },
+    "card_identical": {
+        "pl": "Identyczne",
+        "en": "Identical",
+    },
+    "card_errors": {
+        "pl": "Błędy",
+        "en": "Errors",
+    },
     "btn_sync": {
         "pl": "⚡ Zsynchronizuj zaznaczone pliki",
         "en": "⚡ Synchronize selected files",

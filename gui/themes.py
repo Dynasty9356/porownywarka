@@ -66,6 +66,10 @@ QPushButton {
     color: #FFFFFF;
 }
 
+QPushButton:focus {
+    border: 2px solid #60CDFF;
+}
+
 QPushButton:hover {
     background-color: #383838;
     border: 1px solid #5A5A5A;
@@ -300,6 +304,10 @@ QPushButton {
     padding: 7px 14px;
     font-weight: 600;
     color: #1A1A1A;
+}
+
+QPushButton:focus {
+    border: 2px solid #005FB8;
 }
 
 QPushButton:hover {
