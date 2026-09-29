@@ -336,6 +336,11 @@ class MainWindow(QWidget):
         self._refresh_profiles_list()
         self._apply_settings_to_ui()
 
+        # Bezpieczne asynchroniczne sprawdzanie aktualizacji w tle przy uruchomieniu (jeśli włączone)
+        if settings.check_updates_on_startup:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(1500, self._check_update_on_startup)
+
     def _build_ui(self):
         settings = load_settings()
         lang = settings.language
@@ -1258,6 +1263,28 @@ class MainWindow(QWidget):
         dlg.exec()
         # Odśwież UI po zapisaniu ustawień (motyw, język, parametry)
         self._apply_settings_to_ui()
+
+    def _open_about(self):
+        from gui.about_dialog import AboutDialog
+        dlg = AboutDialog(self)
+        dlg.exec()
+
+    def _check_update_on_startup(self):
+        """Asynchroniczne sprawdzenie nowszej wersji przy uruchomieniu programu (nie blokuje GUI)."""
+        settings = load_settings()
+        if not settings.check_updates_on_startup:
+            return
+        from gui.settings_dialog import CheckUpdateWorker
+        self._startup_update_worker = CheckUpdateWorker(repo=settings.github_repo, parent=self)
+        self._startup_update_worker.finished.connect(self._on_startup_update_finished)
+        self._startup_update_worker.start()
+
+    def _on_startup_update_finished(self, info):
+        """Reakcja na zakończenie sprawdzania aktualizacji przy starcie."""
+        if getattr(info, "is_available", False) and not getattr(info, "error_message", ""):
+            from gui.update_dialog import UpdateAvailableDialog
+            dlg = UpdateAvailableDialog(info, parent=self)
+            dlg.exec()
 
     def _update_ui_language(self, lang: str):
         """Aktualizuje wszystkie etykiety, przyciski i teksty w oknie na wskazany język."""

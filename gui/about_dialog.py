@@ -72,7 +72,24 @@ class AboutDialog(QDialog):
         copy_lbl.setStyleSheet("font-size: 11px; color: #888888;")
         layout.addWidget(copy_lbl)
 
-        # Przycisk OK
-        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        btn_box.accepted.connect(self.accept)
-        layout.addWidget(btn_box)
+        # Przyciski akcji
+        btn_layout = QHBoxLayout()
+        btn_check = QPushButton("🔄 Sprawdź aktualizacje...")
+        btn_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_check.clicked.connect(self._open_updates)
+        btn_layout.addWidget(btn_check)
+        btn_layout.addStretch()
+
+        btn_ok = QPushButton("OK")
+        btn_ok.setObjectName("primaryButton")
+        btn_ok.setFixedWidth(80)
+        btn_ok.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_ok)
+        layout.addLayout(btn_layout)
+
+    def _open_updates(self):
+        """Otwiera okno ustawień bezpośrednio na zakładce Aktualizacje (indeks 6)."""
+        self.accept()
+        from gui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self.parent(), initial_tab=6)
+        dlg.exec()

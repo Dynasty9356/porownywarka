@@ -336,6 +336,74 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pl": "🔔 Zasobnik",
         "en": "🔔 Tray",
     },
+    "tab_updates": {
+        "pl": "🔄 Aktualizacje",
+        "en": "🔄 Updates",
+    },
+    "grp_updates_status": {
+        "pl": "Status aktualizacji programu",
+        "en": "Application Update Status",
+    },
+    "lbl_installed_version": {
+        "pl": "Zainstalowana wersja: v{version}",
+        "en": "Installed version: v{version}",
+    },
+    "chk_check_updates_startup": {
+        "pl": "Automatycznie sprawdzaj dostępność aktualizacji przy uruchamianiu programu",
+        "en": "Automatically check for updates on application startup",
+    },
+    "btn_check_updates_now": {
+        "pl": "🔍 Sprawdź dostępność aktualizacji teraz",
+        "en": "🔍 Check for updates now",
+    },
+    "status_update_idle": {
+        "pl": "Kliknij przycisk, aby sprawdzić czy jest dostępna nowsza wersja.",
+        "en": "Click the button to check for newer versions.",
+    },
+    "status_update_checking": {
+        "pl": "⏳ Łączenie z bezpiecznym serwerem wydań... Proszę czekać.",
+        "en": "⏳ Connecting to secure release server... Please wait.",
+    },
+    "status_update_latest": {
+        "pl": "✅ Masz najnowszą wersję programu ({version}). Wszystko jest aktualne!",
+        "en": "✅ You have the latest version ({version}). Everything is up to date!",
+    },
+    "status_update_available": {
+        "pl": "🎉 Dostępna jest nowa wersja: {version}! (Twoja wersja: v{current})",
+        "en": "🎉 New version available: {version}! (Your version: v{current})",
+    },
+    "status_update_error": {
+        "pl": "⚠️ Nie udało się sprawdzić aktualizacji: {error}",
+        "en": "⚠️ Could not check for updates: {error}",
+    },
+    "btn_download_update": {
+        "pl": "⬇️ Pobierz najnowszą wersję ({version})",
+        "en": "⬇️ Download latest version ({version})",
+    },
+    "dlg_update_title": {
+        "pl": "Dostępna nowa wersja FolderSync",
+        "en": "FolderSync Update Available",
+    },
+    "dlg_update_header": {
+        "pl": "Dostępna jest nowa wersja {version}!",
+        "en": "A new version {version} is available!",
+    },
+    "dlg_update_current": {
+        "pl": "Obecnie używasz wersji: v{current}",
+        "en": "You are currently running: v{current}",
+    },
+    "dlg_update_notes_title": {
+        "pl": "Co nowego w tym wydaniu:",
+        "en": "What's new in this release:",
+    },
+    "dlg_update_btn_download": {
+        "pl": "🚀 Pobierz i zainstaluj nową wersję",
+        "en": "🚀 Download & Install New Version",
+    },
+    "dlg_update_btn_later": {
+        "pl": "Przypomnij później",
+        "en": "Remind me later",
+    },
     "grp_theme_lang": {
         "pl": "Motyw i Język",
         "en": "Theme & Language",

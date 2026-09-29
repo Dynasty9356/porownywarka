@@ -48,6 +48,10 @@ class AppSettings:
     close_to_tray: bool = False
     show_tray_notifications: bool = True
 
+    # Aktualizacje programu
+    check_updates_on_startup: bool = True
+    github_repo: str = "Dynasty9356/porownywarka"
+
 
 def _get_settings_path() -> Path:
     app_data = os.environ.get("APPDATA")

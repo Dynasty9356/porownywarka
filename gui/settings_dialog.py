@@ -4,8 +4,8 @@ Zakładki: Wygląd | Porównywanie | Synchronizacja | Wykluczenia | Historia i R
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,13 +27,28 @@ from PyQt6.QtWidgets import (
 
 from core.settings import AppSettings, load_settings, save_settings, invalidate_cache
 from core.i18n import tr
+from core.updater import UpdateInfo, check_for_updates, validate_https_url
+from core.version import __version__
 from gui.themes import apply_theme_to_app, get_theme_stylesheet, is_dark_theme_active
+
+
+class CheckUpdateWorker(QThread):
+    """Wątek asynchronicznego sprawdzania aktualizacji (bez blokowania wątku głównego GUI)."""
+    finished = pyqtSignal(object)
+
+    def __init__(self, repo: str, parent=None):
+        super().__init__(parent)
+        self.repo = repo
+
+    def run(self):
+        info = check_for_updates(repo=self.repo)
+        self.finished.emit(info)
 
 
 class SettingsDialog(QDialog):
     """Okno konfiguracji FolderSync z podziałem na zakładki tematyczne."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial_tab: int = 0):
         super().__init__(parent)
         self.settings = load_settings()
         self.lang = self.settings.language
@@ -44,6 +59,8 @@ class SettingsDialog(QDialog):
 
         self._build_ui()
         self._load_values()
+        if 0 <= initial_tab < self.tabs.count():
+            self.tabs.setCurrentIndex(initial_tab)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -67,6 +84,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._tab_exclusions(), tr("tab_exclusions", self.lang))
         self.tabs.addTab(self._tab_history(), tr("tab_history", self.lang))
         self.tabs.addTab(self._tab_tray(), tr("tab_tray", self.lang))
+        self.tabs.addTab(self._tab_updates(), tr("tab_updates", self.lang))
 
         # Przyciski
         btn_box = QDialogButtonBox()
@@ -327,6 +345,111 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return w
 
+    # ─── Zakładka: Aktualizacje ──────────────────────────────────────────
+    def _tab_updates(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setSpacing(14)
+
+        is_dark = is_dark_theme_active(self.settings.theme)
+        accent_color = "#60CDFF" if is_dark else "#005FB8"
+
+        # 1. Informacja o zainstalowanej wersji
+        self.lbl_installed_ver = QLabel(f"🛡️ {tr('lbl_installed_version', self.lang, version=__version__)}")
+        self.lbl_installed_ver.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.lbl_installed_ver.setStyleSheet(f"color: {accent_color}; margin-bottom: 2px;")
+        layout.addWidget(self.lbl_installed_ver)
+
+        # 2. Opcja automatycznego sprawdzania przy starcie
+        grp_auto = QGroupBox(tr("grp_updates_status", self.lang))
+        g_auto_layout = QVBoxLayout(grp_auto)
+        g_auto_layout.setSpacing(10)
+
+        self.chk_auto_updates = QCheckBox(tr("chk_check_updates_startup", self.lang))
+        g_auto_layout.addWidget(self.chk_auto_updates)
+        layout.addWidget(grp_auto)
+
+        # 3. Ręczne sprawdzanie aktualizacji
+        grp_manual = QGroupBox(tr("btn_check_updates_now", self.lang))
+        g_manual_layout = QVBoxLayout(grp_manual)
+        g_manual_layout.setSpacing(10)
+
+        row_btn = QHBoxLayout()
+        self.btn_check_updates = QPushButton(tr("btn_check_updates_now", self.lang))
+        self.btn_check_updates.setObjectName("primaryButton")
+        self.btn_check_updates.clicked.connect(self._on_manual_check_updates)
+        row_btn.addWidget(self.btn_check_updates)
+        row_btn.addStretch()
+        g_manual_layout.addLayout(row_btn)
+
+        self.lbl_update_status = QLabel(tr("status_update_idle", self.lang))
+        self.lbl_update_status.setWordWrap(True)
+        self.lbl_update_status.setFont(QFont("Segoe UI", 10))
+        g_manual_layout.addWidget(self.lbl_update_status)
+
+        self.btn_download_update = QPushButton(tr("btn_download_update", self.lang, version=""))
+        self.btn_download_update.setVisible(False)
+        self.btn_download_update.setStyleSheet(
+            "background-color: #107C10; color: #FFFFFF; font-weight: bold; padding: 8px 16px; border-radius: 6px;"
+        )
+        self.btn_download_update.clicked.connect(self._on_download_update_clicked)
+        g_manual_layout.addWidget(self.btn_download_update)
+
+        self.txt_release_notes = QTextEdit()
+        self.txt_release_notes.setReadOnly(True)
+        self.txt_release_notes.setMaximumHeight(140)
+        self.txt_release_notes.setVisible(False)
+        g_manual_layout.addWidget(self.txt_release_notes)
+
+        layout.addWidget(grp_manual)
+        layout.addStretch()
+        return w
+
+    def _on_manual_check_updates(self):
+        """Uruchamia asynchroniczne sprawdzanie aktualizacji w osobnym wątku."""
+        self.btn_check_updates.setEnabled(False)
+        self.btn_download_update.setVisible(False)
+        self.txt_release_notes.setVisible(False)
+        self.lbl_update_status.setText(tr("status_update_checking", self.lang))
+        is_dark = is_dark_theme_active(self.settings.theme)
+        self.lbl_update_status.setStyleSheet("color: #60CDFF;" if is_dark else "color: #005FB8;")
+
+        self._update_worker = CheckUpdateWorker(repo=self.settings.github_repo, parent=self)
+        self._update_worker.finished.connect(self._on_update_check_finished)
+        self._update_worker.start()
+
+    def _on_update_check_finished(self, info: UpdateInfo):
+        """Prezentuje rezultat weryfikacji wersji użytkownikowi (WCAG AAA)."""
+        self.btn_check_updates.setEnabled(True)
+        is_dark = is_dark_theme_active(self.settings.theme)
+
+        if info.error_message:
+            self.lbl_update_status.setText(tr("status_update_error", self.lang, error=info.error_message))
+            self.lbl_update_status.setStyleSheet("color: #FF5555; font-weight: 600;")
+            return
+
+        if info.is_available:
+            self.lbl_update_status.setText(
+                tr("status_update_available", self.lang, version=info.latest_version, current=info.current_version)
+            )
+            self.lbl_update_status.setStyleSheet("color: #107C10; font-weight: bold;" if not is_dark else "color: #4CAF50; font-weight: bold;")
+
+            self._latest_download_url = info.download_url
+            self.btn_download_update.setText(tr("btn_download_update", self.lang, version=info.latest_version))
+            self.btn_download_update.setVisible(True)
+
+            if info.release_notes:
+                self.txt_release_notes.setPlainText(info.release_notes)
+                self.txt_release_notes.setVisible(True)
+        else:
+            self.lbl_update_status.setText(tr("status_update_latest", self.lang, version=info.current_version))
+            self.lbl_update_status.setStyleSheet("color: #107C10; font-weight: bold;" if not is_dark else "color: #4CAF50; font-weight: bold;")
+
+    def _on_download_update_clicked(self):
+        url = getattr(self, "_latest_download_url", "")
+        if validate_https_url(url):
+            QDesktopServices.openUrl(QUrl(url))
+
     # ─── Ładowanie i Zapisywanie ─────────────────────────────────────────
     def _load_values(self):
         s = self.settings
@@ -351,6 +474,8 @@ class SettingsDialog(QDialog):
         self.chk_minimize_to_tray.setChecked(s.minimize_to_tray)
         self.chk_close_to_tray.setChecked(s.close_to_tray)
         self.chk_tray_notifications.setChecked(s.show_tray_notifications)
+
+        self.chk_auto_updates.setChecked(s.check_updates_on_startup)
 
     def _save(self):
         s = self.settings
@@ -378,6 +503,8 @@ class SettingsDialog(QDialog):
         s.minimize_to_tray = self.chk_minimize_to_tray.isChecked()
         s.close_to_tray = self.chk_close_to_tray.isChecked()
         s.show_tray_notifications = self.chk_tray_notifications.isChecked()
+
+        s.check_updates_on_startup = self.chk_auto_updates.isChecked()
 
         invalidate_cache()
         if save_settings(s):
