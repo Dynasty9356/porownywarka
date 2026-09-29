@@ -43,5 +43,6 @@ Stworzenie natywnej, nowoczesnej aplikacji desktopowej na system Windows 11 pod 
    - Krok 2: Uruchom i przetestuj aplikację lokalnie.
    - Krok 3: Przygotuj proces budowania aplikacji do pliku `.exe`.
    - Krok 4: Przygotuj skrypt instalatora (np. Inno Setup) i skompiluj gotowy plik instalacyjny `.exe`.
+   - Krok 5: Przy zmianie wersji, zmień numer wersji w 2 plikach projektu "core/version.py" oraz "installer.iss" i przygotuj treść do formularza GitHub.
 3. Wyjaśniaj komendy prosto, wskazując dokładnie, co się dzieje i co użytkownik ma kliknąć lub zatwierdzić.
 4. Rozmawiaj po polsku.
