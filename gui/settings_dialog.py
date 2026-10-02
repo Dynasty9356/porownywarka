@@ -340,8 +340,56 @@ class SettingsDialog(QDialog):
         g_layout.addWidget(self.chk_minimize_to_tray)
         g_layout.addWidget(self.chk_close_to_tray)
         g_layout.addWidget(self.chk_tray_notifications)
-
         layout.addWidget(grp)
+
+        # Grupa 2: Harmonogram zadań
+        grp_sched = QGroupBox("Harmonogram zadań w tle (Scheduler)" if is_pl else "Background Scheduler")
+        g_sched_layout = QVBoxLayout(grp_sched)
+        g_sched_layout.setSpacing(10)
+
+        self.chk_scheduler_enabled = QCheckBox(
+            "Włącz cykliczne sprawdzanie w tle (Harmonogram)" if is_pl else "Enable periodic background check (Scheduler)"
+        )
+        row_interval = QHBoxLayout()
+        row_interval.addWidget(QLabel("Częstotliwość:" if is_pl else "Frequency:"))
+        self.combo_scheduler_interval = QComboBox()
+        self._interval_values = [5, 15, 30, 60, 120, 360, 1440]
+        intervals_labels_pl = [
+            "Co 5 minut", "Co 15 minut", "Co 30 minut",
+            "Co 1 godzinę", "Co 2 godziny", "Co 6 godzin", "Codziennie (co 24h)"
+        ]
+        intervals_labels_en = [
+            "Every 5 min", "Every 15 min", "Every 30 min",
+            "Every 1 hour", "Every 2 hours", "Every 6 hours", "Daily (every 24h)"
+        ]
+        labels = intervals_labels_pl if is_pl else intervals_labels_en
+        for idx, val in enumerate(self._interval_values):
+            self.combo_scheduler_interval.addItem(labels[idx], val)
+        row_interval.addWidget(self.combo_scheduler_interval)
+        row_interval.addStretch()
+
+        self.chk_scheduler_auto_sync = QCheckBox(
+            "Automatycznie synchronizuj (z kopią zapasową .backup) przy wykryciu różnic"
+            if is_pl else "Automatically sync (with .backup copy) when differences are detected"
+        )
+
+        g_sched_layout.addWidget(self.chk_scheduler_enabled)
+        g_sched_layout.addLayout(row_interval)
+        g_sched_layout.addWidget(self.chk_scheduler_auto_sync)
+        layout.addWidget(grp_sched)
+
+        # Grupa 3: Watch Mode
+        grp_watch = QGroupBox("Ciągły Tryb Obserwatora (Watch Mode)" if is_pl else "Continuous Watch Mode")
+        g_watch_layout = QVBoxLayout(grp_watch)
+        g_watch_layout.setSpacing(10)
+
+        self.chk_watch_mode = QCheckBox(
+            "Monitoruj aktywne foldery w czasie rzeczywistym i reaguj na zmiany plików"
+            if is_pl else "Monitor active folders in real-time and react to file changes"
+        )
+        g_watch_layout.addWidget(self.chk_watch_mode)
+        layout.addWidget(grp_watch)
+
         layout.addStretch()
         return w
 
@@ -475,6 +523,13 @@ class SettingsDialog(QDialog):
         self.chk_close_to_tray.setChecked(s.close_to_tray)
         self.chk_tray_notifications.setChecked(s.show_tray_notifications)
 
+        self.chk_scheduler_enabled.setChecked(s.scheduler_enabled)
+        curr_int = s.scheduler_interval_minutes
+        idx = self._interval_values.index(curr_int) if curr_int in self._interval_values else 2
+        self.combo_scheduler_interval.setCurrentIndex(idx)
+        self.chk_scheduler_auto_sync.setChecked(s.scheduler_auto_sync)
+        self.chk_watch_mode.setChecked(s.watch_mode_enabled)
+
         self.chk_auto_updates.setChecked(s.check_updates_on_startup)
 
     def _save(self):
@@ -503,6 +558,11 @@ class SettingsDialog(QDialog):
         s.minimize_to_tray = self.chk_minimize_to_tray.isChecked()
         s.close_to_tray = self.chk_close_to_tray.isChecked()
         s.show_tray_notifications = self.chk_tray_notifications.isChecked()
+
+        s.scheduler_enabled = self.chk_scheduler_enabled.isChecked()
+        s.scheduler_interval_minutes = self.combo_scheduler_interval.currentData() or 30
+        s.scheduler_auto_sync = self.chk_scheduler_auto_sync.isChecked()
+        s.watch_mode_enabled = self.chk_watch_mode.isChecked()
 
         s.check_updates_on_startup = self.chk_auto_updates.isChecked()
 

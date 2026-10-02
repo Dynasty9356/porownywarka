@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import csv
+import json
 
 from core.comparator import ComparisonItem, FileStatus
 from core.version import APP_NAME, __version__
@@ -146,6 +147,105 @@ def export_csv(
                     item.sha256_b or "",
                     item.error_msg or "",
                 ])
+        return True
+    except OSError:
+        return False
+
+
+def export_json(
+    items: list[ComparisonItem],
+    dir_a: str,
+    dir_b: str,
+    output_path: Path,
+    profile_name: str = "",
+) -> bool:
+    """Generuje ustrukturyzowany raport JSON ze szczegółami porównania (Standard API / IT-Ops)."""
+    now = datetime.now().isoformat()
+    total = len(items)
+    diff = sum(1 for i in items if i.status.is_different)
+
+    data = {
+        "generator": APP_NAME,
+        "version": __version__,
+        "timestamp": now,
+        "profile": profile_name or None,
+        "dir_a": dir_a,
+        "dir_b": dir_b,
+        "summary": {
+            "total_files": total,
+            "different_files": diff,
+            "identical_files": total - diff,
+            "newer_a": sum(1 for i in items if i.status == FileStatus.NEWER_A),
+            "newer_b": sum(1 for i in items if i.status == FileStatus.NEWER_B),
+            "only_a": sum(1 for i in items if i.status == FileStatus.ONLY_A),
+            "only_b": sum(1 for i in items if i.status == FileStatus.ONLY_B),
+            "different_content": sum(1 for i in items if i.status == FileStatus.DIFFERENT_CONTENT),
+            "errors": sum(1 for i in items if i.status == FileStatus.ERROR),
+        },
+        "items": [
+            {
+                "rel_path": i.rel_path,
+                "status": i.status.value,
+                "status_display": i.status.display_name,
+                "size_a": i.size_a,
+                "size_b": i.size_b,
+                "mtime_a": i.mtime_a.isoformat() if i.mtime_a else None,
+                "mtime_b": i.mtime_b.isoformat() if i.mtime_b else None,
+                "sha256_a": i.sha256_a,
+                "sha256_b": i.sha256_b,
+                "error": i.error_msg,
+            }
+            for i in items
+        ],
+    }
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except OSError:
+        return False
+
+
+def export_txt(
+    items: list[ComparisonItem],
+    dir_a: str,
+    dir_b: str,
+    output_path: Path,
+    profile_name: str = "",
+) -> bool:
+    """Generuje czytelny raport tekstowy (dla logów, notatek, systemów monitoringu)."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    total = len(items)
+    diff = sum(1 for i in items if i.status.is_different)
+    lines = [
+        "=" * 80,
+        f"RAPORT PORÓWNANIA KATALOGÓW — {APP_NAME} v{__version__}",
+        f"Data wygenerowania: {now}",
+        f"Szablon: {profile_name or '—'}",
+        f"Katalog A: {dir_a}",
+        f"Katalog B: {dir_b}",
+        "=" * 80,
+        "PODSUMOWANIE:",
+        f"  Łącznie plików:   {total}",
+        f"  Różniących się:   {diff}",
+        f"  Identycznych:     {total - diff}",
+        f"  Nowszych w A:     {sum(1 for i in items if i.status == FileStatus.NEWER_A)}",
+        f"  Nowszych w B:     {sum(1 for i in items if i.status == FileStatus.NEWER_B)}",
+        f"  Tylko w A:        {sum(1 for i in items if i.status == FileStatus.ONLY_A)}",
+        f"  Tylko w B:        {sum(1 for i in items if i.status == FileStatus.ONLY_B)}",
+        "=" * 80,
+        f"{'STATUS':<20} | {'ROZMIAR A / B':<20} | ŚCIEŻKA",
+        "-" * 80,
+    ]
+    for item in items:
+        size_a = _fmt_size(item.size_a)
+        size_b = _fmt_size(item.size_b)
+        size_str = f"{size_a} / {size_b}"
+        lines.append(f"{item.status.display_name:<20} | {size_str:<20} | {item.rel_path}")
+    lines.append("=" * 80)
+    lines.append(f"Koniec raportu — {APP_NAME}")
+    try:
+        output_path.write_text("\n".join(lines), encoding="utf-8")
         return True
     except OSError:
         return False

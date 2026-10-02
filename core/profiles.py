@@ -4,7 +4,7 @@ oraz pełną kompatybilność wsteczną ze strukturami listowymi i słownikowymi
 """
 
 from __future__ import annotations
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
@@ -20,6 +20,8 @@ class SyncProfile:
     create_backup: bool = True
     sync_mode: str = "UPDATE_OLDER"
     raw_data: Optional[dict[str, Any]] = None
+    exclude_patterns: list[str] = field(default_factory=list)
+    description: str = ""
 
 
 def get_config_dir() -> Path:
@@ -68,6 +70,10 @@ def _parse_profile_dict(name: str, item: dict[str, Any]) -> Optional[SyncProfile
     create_backup = bool(item.get("create_backup", item.get("backup", True)))
     sync_mode = _normalize_sync_mode(item.get("sync_mode", "UPDATE_OLDER"))
 
+    raw_patterns = item.get("exclude_patterns", [])
+    exclude_patterns = [str(x) for x in raw_patterns] if isinstance(raw_patterns, list) else []
+    description = str(item.get("description", "")).strip()
+
     return SyncProfile(
         name=p_name,
         dir_a=dir_a,
@@ -76,6 +82,8 @@ def _parse_profile_dict(name: str, item: dict[str, Any]) -> Optional[SyncProfile
         create_backup=create_backup,
         sync_mode=sync_mode,
         raw_data=item,
+        exclude_patterns=exclude_patterns,
+        description=description,
     )
 
 
@@ -137,6 +145,8 @@ def save_profile(profile: SyncProfile) -> bool:
                 "compare_hashes": p.compare_hashes,
                 "create_backup": p.create_backup,
                 "sync_mode": p.sync_mode,
+                "exclude_patterns": getattr(p, "exclude_patterns", []),
+                "description": getattr(p, "description", ""),
             })
             output_list.append(base_dict)
 
@@ -174,6 +184,8 @@ def delete_profile(name: str) -> bool:
                 "compare_hashes": p.compare_hashes,
                 "create_backup": p.create_backup,
                 "sync_mode": p.sync_mode,
+                "exclude_patterns": getattr(p, "exclude_patterns", []),
+                "description": getattr(p, "description", ""),
             })
             output_list.append(base_dict)
 

@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 from typing import Any, Optional
 
-from PyQt6.QtCore import QPoint, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -53,7 +54,9 @@ from core.comparator import (
 )
 from core.history import HistoryEntry, append_history_entry, make_entry_id
 from core.profiles import SyncProfile, delete_profile, load_profiles, save_profile
+from core.scheduler import DirectoryWatcher, SyncScheduler
 from core.settings import load_settings
+from core.version import APP_NAME, __version__
 from core.i18n import tr, get_status_display_name
 from gui.about_dialog import AboutDialog
 from gui.themes import (
@@ -331,14 +334,24 @@ class MainWindow(QWidget):
         self.sync_thread: Optional[SyncWorker] = None
         self.profiles: dict[str, SyncProfile] = {}
         self._current_entry_id: str = ""
+        self._auto_sync_on_finish: bool = False
+
+        self.scheduler = SyncScheduler(self)
+        self.scheduler.scheduled_trigger.connect(self._on_scheduled_trigger)
+
+        self.dir_watcher = DirectoryWatcher(debounce_ms=3000, parent=self)
+        self.dir_watcher.change_detected.connect(self._on_dir_change_detected)
 
         self._build_ui()
+        self.edit_dir_a.textChanged.connect(self._update_watcher_paths)
+        self.edit_dir_b.textChanged.connect(self._update_watcher_paths)
+
         self._refresh_profiles_list()
         self._apply_settings_to_ui()
+        self._setup_tray_icon()
 
         # Bezpieczne asynchroniczne sprawdzanie aktualizacji w tle przy uruchomieniu (jeśli włączone)
         if settings.check_updates_on_startup:
-            from PyQt6.QtCore import QTimer
             QTimer.singleShot(1500, self._check_update_on_startup)
 
     def _build_ui(self):
@@ -563,6 +576,16 @@ class MainWindow(QWidget):
         self.btn_export_csv.clicked.connect(lambda: self._export_report("csv"))
         tools_layout.addWidget(self.btn_export_csv)
 
+        self.btn_export_json = QPushButton(tr("btn_export_json", lang))
+        self.btn_export_json.setToolTip(tr("btn_export_json_tip", lang))
+        self.btn_export_json.clicked.connect(lambda: self._export_report("json"))
+        tools_layout.addWidget(self.btn_export_json)
+
+        self.btn_export_txt = QPushButton(tr("btn_export_txt", lang))
+        self.btn_export_txt.setToolTip(tr("btn_export_txt_tip", lang))
+        self.btn_export_txt.clicked.connect(lambda: self._export_report("txt"))
+        tools_layout.addWidget(self.btn_export_txt)
+
         self.btn_backup_mgr = QPushButton(tr("btn_backup_mgr", lang))
         self.btn_backup_mgr.setToolTip(tr("btn_backup_mgr_tip", lang))
         self.btn_backup_mgr.clicked.connect(self._open_backup_manager)
@@ -785,9 +808,19 @@ class MainWindow(QWidget):
 
         settings = load_settings()
         self._current_entry_id = make_entry_id()
+
+        # Bezpieczna fuzja wykluczeń: globalne + opcjonalne per-profil
+        effective_excludes = list(settings.global_exclude_patterns)
+        profile_name = self.combo_profiles.currentData()
+        if profile_name and profile_name in self.profiles:
+            active_p = self.profiles[profile_name]
+            for pat in getattr(active_p, "exclude_patterns", []):
+                if pat and pat not in effective_excludes:
+                    effective_excludes.append(pat)
+
         self.compare_thread = CompareWorker(
             path_a, path_b, self.chk_hash.isChecked(),
-            exclude_patterns=settings.global_exclude_patterns,
+            exclude_patterns=effective_excludes,
         )
         self.compare_thread.progress.connect(self._on_compare_progress)
         self.compare_thread.finished.connect(self._on_compare_finished)
@@ -849,6 +882,40 @@ class MainWindow(QWidget):
             compare_hashes=self.chk_hash.isChecked(),
         )
         append_history_entry(entry)
+
+        # Obsługa automatycznej synchronizacji wywołanej przez harmonogram w tle
+        if getattr(self, "_auto_sync_on_finish", False):
+            self._auto_sync_on_finish = False
+            if diff_count > 0:
+                raw_a = self.edit_dir_a.text().strip()
+                raw_b = self.edit_dir_b.text().strip()
+                if raw_a and raw_b:
+                    path_a = Path(raw_a)
+                    path_b = Path(raw_b)
+                    direction = self.combo_sync_mode.currentData() or SyncDirection.UPDATE_OLDER
+                    actions = plan_sync_actions(self.current_items, path_a, path_b, direction)
+                    if actions:
+                        self._notify_tray(
+                            "FolderSync — Auto-Sync",
+                            f"Harmonogram uruchamia bezpieczną synchronizację {len(actions)} operacji..."
+                        )
+                        self.btn_compare.setEnabled(False)
+                        self.btn_sync.setEnabled(False)
+                        self.btn_dry_run.setEnabled(False)
+                        self.progress_bar.setVisible(True)
+                        self.progress_bar.setValue(0)
+                        self.lbl_status.setText("Automatyczna synchronizacja w tle (Harmonogram)...")
+
+                        self.sync_thread = SyncWorker(
+                            actions=actions,
+                            create_backup=True,
+                            verify_sha256=True,
+                        )
+                        self.sync_thread.progress.connect(self._on_sync_progress)
+                        self.sync_thread.finished.connect(self._on_sync_finished)
+                        self.sync_thread.cancelled.connect(self._on_operation_cancelled)
+                        self.sync_thread.error.connect(self._on_sync_error)
+                        self.sync_thread.start()
 
     def _on_compare_error(self, err_msg: str):
         self.progress_bar.setVisible(False)
@@ -1137,6 +1204,17 @@ class MainWindow(QWidget):
         if report.is_dry_run:
             QMessageBox.information(self, "⚠️ Wynik Symulacji (Dry-Run)", summary_msg)
         else:
+            if report.errors:
+                self._notify_tray(
+                    "FolderSync — Błędy synchronizacji",
+                    f"Zaktualizowano {report.files_updated} plików, ale wystąpiło {len(report.errors)} błędów.",
+                    is_error=True,
+                )
+            else:
+                self._notify_tray(
+                    "FolderSync — Synchronizacja zakończona",
+                    f"Pomyślnie zsynchronizowano {report.files_updated} plików ({report.bytes_transferred / (1024 * 1024):.2f} MB).",
+                )
             QMessageBox.information(self, "Raport Końcowy Synchronizacji", summary_msg)
             # Aktualizuj historię o status synchronizacji
             from core.history import load_history, save_history
@@ -1200,15 +1278,20 @@ class MainWindow(QWidget):
 
         settings = load_settings()
         default_dir = settings.report_output_dir or str(Path.home())
-        ext = "html" if fmt == "html" else "csv"
-        flt = "Raport HTML (*.html)" if fmt == "html" else "Raport CSV (*.csv)"
+        flt_map = {
+            "html": ("html", "Raport HTML (*.html)"),
+            "csv": ("csv", "Raport CSV (*.csv)"),
+            "json": ("json", "Raport JSON (*.json)"),
+            "txt": ("txt", "Raport Tekstowy (*.txt)"),
+        }
+        ext, flt = flt_map.get(fmt, ("html", "Raport HTML (*.html)"))
         path_str, _ = QFileDialog.getSaveFileName(
             self, "Zapisz raport", str(Path(default_dir) / f"raport_foldersync.{ext}"), flt
         )
         if not path_str:
             return
 
-        from gui.report_exporter import export_html, export_csv
+        from gui.report_exporter import export_html, export_csv, export_json, export_txt
         out_path = Path(path_str)
         profile_name = self.combo_profiles.currentData() or ""
         ok = False
@@ -1220,12 +1303,28 @@ class MainWindow(QWidget):
                 out_path,
                 profile_name=str(profile_name) if profile_name else "",
             )
-        else:
+        elif fmt == "csv":
             ok = export_csv(
                 self.current_items,
                 self.edit_dir_a.text().strip(),
                 self.edit_dir_b.text().strip(),
                 out_path,
+            )
+        elif fmt == "json":
+            ok = export_json(
+                self.current_items,
+                self.edit_dir_a.text().strip(),
+                self.edit_dir_b.text().strip(),
+                out_path,
+                profile_name=str(profile_name) if profile_name else "",
+            )
+        elif fmt == "txt":
+            ok = export_txt(
+                self.current_items,
+                self.edit_dir_a.text().strip(),
+                self.edit_dir_b.text().strip(),
+                out_path,
+                profile_name=str(profile_name) if profile_name else "",
             )
 
         if ok:
@@ -1360,6 +1459,12 @@ class MainWindow(QWidget):
         if hasattr(self, "btn_export_csv"):
             self.btn_export_csv.setText(tr("btn_export_csv", lang))
             self.btn_export_csv.setToolTip(tr("btn_export_csv_tip", lang))
+        if hasattr(self, "btn_export_json"):
+            self.btn_export_json.setText(tr("btn_export_json", lang))
+            self.btn_export_json.setToolTip(tr("btn_export_json_tip", lang))
+        if hasattr(self, "btn_export_txt"):
+            self.btn_export_txt.setText(tr("btn_export_txt", lang))
+            self.btn_export_txt.setToolTip(tr("btn_export_txt_tip", lang))
         if hasattr(self, "btn_backup_mgr"):
             self.btn_backup_mgr.setText(tr("btn_backup_mgr", lang))
             self.btn_backup_mgr.setToolTip(tr("btn_backup_mgr_tip", lang))
@@ -1392,13 +1497,145 @@ class MainWindow(QWidget):
         idx = sync_map.get(settings.default_sync_mode, 0)
         self.combo_sync_mode.setCurrentIndex(idx)
 
-    # ================= Zamknięcie okna =================
+        # Konfiguracja Harmonogramu (Scheduler)
+        if hasattr(self, "scheduler"):
+            if settings.scheduler_enabled:
+                self.scheduler.start(settings.scheduler_interval_minutes, settings.scheduler_auto_sync)
+            else:
+                self.scheduler.stop()
+
+        # Konfiguracja Obserwatora (Watch Mode)
+        if hasattr(self, "dir_watcher"):
+            self._update_watcher_paths()
+
+    # ================= Zasobnik systemowy (System Tray) i Zdarzenia Okna =================
+
+    def _setup_tray_icon(self):
+        """Inicjalizacja ikony w zasobniku systemowym (Windows Notification Area)."""
+        icon_path = Path(__file__).resolve().parent.parent / "app_icon.ico"
+        icon = QIcon(str(icon_path)) if icon_path.exists() else self.windowIcon()
+
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(icon)
+        self.tray_icon.setToolTip(f"{APP_NAME} — Porównywarka i Synchronizator")
+
+        tray_menu = QMenu(self)
+
+        action_show = QAction("🖥️ Otwórz FolderSync", self)
+        action_show.triggered.connect(self._restore_from_tray)
+        tray_menu.addAction(action_show)
+
+        action_compare = QAction("🔍 Porównaj teraz", self)
+        action_compare.triggered.connect(self._start_compare)
+        tray_menu.addAction(action_compare)
+
+        action_backup = QAction("⏪ Menedżer kopii zapasowych", self)
+        action_backup.triggered.connect(self._open_backup_manager)
+        tray_menu.addAction(action_backup)
+
+        action_settings = QAction("⚙️ Ustawienia", self)
+        action_settings.triggered.connect(self._open_settings)
+        tray_menu.addAction(action_settings)
+
+        tray_menu.addSeparator()
+
+        action_quit = QAction("❌ Zamknij program", self)
+        action_quit.triggered.connect(self._quit_application)
+        tray_menu.addAction(action_quit)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.show()
+
+    def _restore_from_tray(self):
+        self.showNormal()
+        self.activateWindow()
+
+    def _quit_application(self):
+        if hasattr(self, "tray_icon"):
+            self.tray_icon.hide()
+        app = QApplication.instance()
+        if app:
+            app.quit()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason):
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            if self.isVisible() and not self.isMinimized():
+                self.hide()
+            else:
+                self._restore_from_tray()
+
+    def _notify_tray(self, title: str, message: str, is_error: bool = False):
+        settings = load_settings()
+        if not settings.show_tray_notifications or not hasattr(self, "tray_icon") or not self.tray_icon.isVisible():
+            return
+        icon_type = QSystemTrayIcon.MessageIcon.Warning if is_error else QSystemTrayIcon.MessageIcon.Information
+        self.tray_icon.showMessage(title, message, icon_type, 4000)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            if self.isMinimized():
+                settings = load_settings()
+                if settings.minimize_to_tray and hasattr(self, "tray_icon") and self.tray_icon.isVisible():
+                    QTimer.singleShot(0, self.hide)
+        super().changeEvent(event)
 
     def closeEvent(self, event):
         settings = load_settings()
-        if settings.close_to_tray:
+        if settings.close_to_tray and hasattr(self, "tray_icon") and self.tray_icon.isVisible():
             event.ignore()
             self.hide()
+            if settings.show_tray_notifications:
+                self.tray_icon.showMessage(
+                    APP_NAME,
+                    "Aplikacja FolderSync działa w tle w zasobniku systemowym.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    2500,
+                )
         else:
+            if hasattr(self, "tray_icon"):
+                self.tray_icon.hide()
             event.accept()
+
+    # ================= Harmonogram (Scheduler) i Obserwator (Watch Mode) =================
+
+    def _update_watcher_paths(self):
+        settings = load_settings()
+        if not hasattr(self, "dir_watcher"):
+            return
+        if settings.watch_mode_enabled:
+            paths = [self.edit_dir_a.text().strip(), self.edit_dir_b.text().strip()]
+            self.dir_watcher.set_watch_paths(paths)
+        else:
+            self.dir_watcher.clear()
+
+    def _on_dir_change_detected(self, changed_path: str):
+        if (self.compare_thread and self.compare_thread.isRunning()) or (self.sync_thread and self.sync_thread.isRunning()):
+            return
+        settings = load_settings()
+        if not settings.watch_mode_enabled:
+            return
+        self._notify_tray(
+            "FolderSync — Wykryto modyfikację",
+            "Wykryto zmiany w monitorowanym folderze. Uruchamiam porównanie..."
+        )
+        self._start_compare()
+
+    def _on_scheduled_trigger(self, auto_sync: bool):
+        if (self.compare_thread and self.compare_thread.isRunning()) or (self.sync_thread and self.sync_thread.isRunning()):
+            return
+        raw_a = self.edit_dir_a.text().strip()
+        raw_b = self.edit_dir_b.text().strip()
+        if not raw_a or not raw_b or not Path(raw_a).is_dir() or not Path(raw_b).is_dir():
+            return
+        self._auto_sync_on_finish = auto_sync
+        self._notify_tray(
+            "FolderSync — Harmonogram zadań",
+            "Uruchamiam zaplanowane sprawdzenie katalogów w tle..."
+        )
+        self._start_compare()
+
 

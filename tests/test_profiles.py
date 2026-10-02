@@ -43,6 +43,25 @@ class TestProfiles(unittest.TestCase):
         self.assertTrue(delete_profile("Backup Danych"))
         self.assertEqual(len(load_profiles()), 0)
 
+    def test_profile_extended_fields(self):
+        p = SyncProfile(
+            name="Profil Zaawansowany",
+            dir_a="C:\\Dane",
+            dir_b="D:\\Dane",
+            compare_hashes=False,
+            create_backup=True,
+            sync_mode="COPY_A_TO_B",
+            exclude_patterns=["*.tmp", "cache/*"],
+            description="Kopia robocza"
+        )
+        self.assertTrue(save_profile(p))
+
+        loaded = load_profiles()
+        self.assertIn("Profil Zaawansowany", loaded)
+        item = loaded["Profil Zaawansowany"]
+        self.assertEqual(item.exclude_patterns, ["*.tmp", "cache/*"])
+        self.assertEqual(item.description, "Kopia robocza")
+
 
 if __name__ == "__main__":
     unittest.main()

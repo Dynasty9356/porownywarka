@@ -266,6 +266,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pl": "Eksportuj wyniki do pliku CSV (Excel, LibreOffice)",
         "en": "Export results to a CSV file (Excel, Calc)",
     },
+    "btn_export_json": {
+        "pl": "📤 Eksport JSON",
+        "en": "📤 Export JSON",
+    },
+    "btn_export_json_tip": {
+        "pl": "Eksportuj szczegółowe wyniki porównania do pliku JSON (API/IT-Ops)",
+        "en": "Export detailed comparison results to a JSON file (API/IT-Ops)",
+    },
+    "btn_export_txt": {
+        "pl": "📝 Eksport TXT",
+        "en": "📝 Export TXT",
+    },
+    "btn_export_txt_tip": {
+        "pl": "Eksportuj podsumowanie porównania do pliku tekstowego",
+        "en": "Export comparison summary to a text file",
+    },
     "btn_backup_mgr": {
         "pl": "⏪ Kopie zapasowe",
         "en": "⏪ Backup Manager",
@@ -333,8 +349,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "📜 History & Reports",
     },
     "tab_tray": {
-        "pl": "🔔 Zasobnik",
-        "en": "🔔 Tray",
+        "pl": "🔔 Zasobnik i Harmonogram",
+        "en": "🔔 Tray & Scheduler",
     },
     "tab_updates": {
         "pl": "🔄 Aktualizacje",

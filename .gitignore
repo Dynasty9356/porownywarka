@@ -1,0 +1,25 @@
+# Pliki ze zmiennymi środowiskowymi i kluczami API (bardzo ważne!)
+.env
+.env.local
+config.json
+
+# Całe foldery (np. zależności i moduły)
+node_modules/
+vendor/
+tests/
+
+# Pliki generowane podczas budowania / kompilacji
+dist/
+build/
+*.exe
+*.apk
+
+# Pliki tymczasowe i specyficzne dla systemu
+.DS_Store
+Thumbs.db
+*.log
+
+# Foldery środowiska IDE / edytorów kodu
+.vscode/
+.idea/
+.agents/

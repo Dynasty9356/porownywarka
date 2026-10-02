@@ -47,6 +47,10 @@ class AppSettings:
     minimize_to_tray: bool = False
     close_to_tray: bool = False
     show_tray_notifications: bool = True
+    scheduler_enabled: bool = False
+    scheduler_interval_minutes: int = 30
+    scheduler_auto_sync: bool = False
+    watch_mode_enabled: bool = False
 
     # Aktualizacje programu
     check_updates_on_startup: bool = True
