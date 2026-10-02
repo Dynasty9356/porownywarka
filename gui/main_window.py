@@ -59,6 +59,7 @@ from core.settings import load_settings
 from core.version import APP_NAME, __version__
 from core.i18n import tr, get_status_display_name
 from gui.about_dialog import AboutDialog
+from gui.statistics_dialog import StatisticsDialog
 from gui.themes import (
     apply_theme_to_app,
     get_status_colors,
@@ -71,6 +72,7 @@ from core.synchronizer import (
     SyncReport,
     execute_sync,
     plan_sync_actions,
+    recommend_sync_direction,
 )
 
 
@@ -129,12 +131,18 @@ class SyncWorker(QThread):
     error = pyqtSignal(str)
 
     def __init__(self, actions: list[SyncAction], create_backup: bool,
-                 verify_sha256: bool, dry_run: bool = False):
+                 verify_sha256: bool, dry_run: bool = False,
+                 pre_sync_cmd: str = "", post_sync_cmd: str = "",
+                 auto_cleanup_backups: bool = True, backup_retention_count: int = 10):
         super().__init__()
         self.actions = actions
         self.create_backup = create_backup
         self.verify_sha256 = verify_sha256
         self.dry_run = dry_run
+        self.pre_sync_cmd = pre_sync_cmd
+        self.post_sync_cmd = post_sync_cmd
+        self.auto_cleanup_backups = auto_cleanup_backups
+        self.backup_retention_count = backup_retention_count
         self._is_cancelled = False
 
     def cancel(self):
@@ -149,6 +157,10 @@ class SyncWorker(QThread):
                 progress_callback=lambda cur, tot, name: self.progress.emit(cur, tot, name),
                 dry_run=self.dry_run,
                 cancel_token=lambda: self._is_cancelled,
+                pre_sync_cmd=self.pre_sync_cmd,
+                post_sync_cmd=self.post_sync_cmd,
+                auto_cleanup_backups=self.auto_cleanup_backups,
+                backup_retention_count=self.backup_retention_count,
             )
             if report.cancelled:
                 self.cancelled.emit()
@@ -534,7 +546,10 @@ class MainWindow(QWidget):
 
         # 6. Panel dolny: Synchronizacja i Ochrona Danych
         self.sync_group = QGroupBox(tr("group_sync", lang))
-        sync_layout = QHBoxLayout(self.sync_group)
+        sync_outer_layout = QVBoxLayout(self.sync_group)
+        sync_outer_layout.setSpacing(6)
+
+        sync_layout = QHBoxLayout()
 
         self.chk_backup = QCheckBox(tr("chk_backup", lang))
         self.chk_backup.setChecked(True)
@@ -555,16 +570,40 @@ class MainWindow(QWidget):
         sync_layout.addWidget(self.combo_sync_mode)
         sync_layout.addStretch()
         sync_layout.addWidget(self.btn_sync)
+        sync_outer_layout.addLayout(sync_layout)
+
+        # Pasek inteligentnej rekomendacji kierunku synchronizacji (AI Hint)
+        rec_layout = QHBoxLayout()
+        self.lbl_recommendation = QLabel("")
+        self.lbl_recommendation.setStyleSheet("color: #60CDFF; font-size: 11px; font-weight: 500;")
+        self.lbl_recommendation.setVisible(False)
+
+        self.btn_apply_recommendation = QPushButton("💡 Zastosuj sugestię")
+        self.btn_apply_recommendation.setFixedHeight(26)
+        self.btn_apply_recommendation.setVisible(False)
+        self.btn_apply_recommendation.setStyleSheet("font-size: 11px; padding: 2px 8px; border-radius: 4px;")
+        self.btn_apply_recommendation.clicked.connect(self._apply_recommended_direction)
+        self._recommended_direction = None
+
+        rec_layout.addWidget(self.lbl_recommendation)
+        rec_layout.addWidget(self.btn_apply_recommendation)
+        rec_layout.addStretch()
+        sync_outer_layout.addLayout(rec_layout)
 
         main_layout.addWidget(self.sync_group)
 
-        # 7. Pasek narzędzi dolny: Historia, Eksport, Backup Manager, Ustawienia
+        # 7. Pasek narzędzi dolny: Historia, Eksport, Backup Manager, Statystyki, Ustawienia
         tools_layout = QHBoxLayout()
 
         self.btn_history = QPushButton(tr("btn_history", lang))
         self.btn_history.setToolTip(tr("btn_history_tip", lang))
         self.btn_history.clicked.connect(self._open_history)
         tools_layout.addWidget(self.btn_history)
+
+        self.btn_statistics = QPushButton("📊 Statystyki")
+        self.btn_statistics.setToolTip("Otwórz panel analityki transferu i monitor zdrowia profili")
+        self.btn_statistics.clicked.connect(self._open_statistics)
+        tools_layout.addWidget(self.btn_statistics)
 
         self.btn_export_html = QPushButton(tr("btn_export_html", lang))
         self.btn_export_html.setToolTip(tr("btn_export_html_tip", lang))
@@ -866,6 +905,17 @@ class MainWindow(QWidget):
         )
         self.btn_sync.setEnabled(diff_count > 0)
 
+        # Inteligentna rekomendacja kierunku synchronizacji (AI Hint)
+        if diff_count > 0:
+            rec_dir, rec_msg = recommend_sync_direction(items)
+            self._recommended_direction = rec_dir
+            self.lbl_recommendation.setText(f"💡 Sugestia: {rec_msg}")
+            self.lbl_recommendation.setVisible(True)
+            self.btn_apply_recommendation.setVisible(True)
+        else:
+            self.lbl_recommendation.setVisible(False)
+            self.btn_apply_recommendation.setVisible(False)
+
         # Zapis do historii
         profile_name = self.combo_profiles.currentData() or ""
         entry = HistoryEntry(
@@ -906,10 +956,20 @@ class MainWindow(QWidget):
                         self.progress_bar.setValue(0)
                         self.lbl_status.setText("Automatyczna synchronizacja w tle (Harmonogram)...")
 
+                        settings = load_settings()
+                        profile_name = self.combo_profiles.currentData()
+                        active_p = self.profiles.get(profile_name) if profile_name and profile_name in self.profiles else None
+                        pre_cmd = getattr(active_p, "pre_sync_cmd", "") if active_p else ""
+                        post_cmd = getattr(active_p, "post_sync_cmd", "") if active_p else ""
+
                         self.sync_thread = SyncWorker(
                             actions=actions,
                             create_backup=True,
                             verify_sha256=True,
+                            pre_sync_cmd=pre_cmd,
+                            post_sync_cmd=post_cmd,
+                            auto_cleanup_backups=settings.backup_auto_cleanup,
+                            backup_retention_count=settings.backup_retention_count,
                         )
                         self.sync_thread.progress.connect(self._on_sync_progress)
                         self.sync_thread.finished.connect(self._on_sync_finished)
@@ -1175,10 +1235,20 @@ class MainWindow(QWidget):
         self.progress_bar.setValue(0)
         self.lbl_status.setText("Synchronizowanie plików...")
 
+        settings = load_settings()
+        profile_name = self.combo_profiles.currentData()
+        active_p = self.profiles.get(profile_name) if profile_name and profile_name in self.profiles else None
+        pre_cmd = getattr(active_p, "pre_sync_cmd", "") if active_p else ""
+        post_cmd = getattr(active_p, "post_sync_cmd", "") if active_p else ""
+
         self.sync_thread = SyncWorker(
             actions=actions,
             create_backup=self.chk_backup.isChecked(),
             verify_sha256=True,
+            pre_sync_cmd=pre_cmd,
+            post_sync_cmd=post_cmd,
+            auto_cleanup_backups=settings.backup_auto_cleanup,
+            backup_retention_count=settings.backup_retention_count,
         )
         self.sync_thread.progress.connect(self._on_sync_progress)
         self.sync_thread.finished.connect(self._on_sync_finished)
@@ -1356,6 +1426,22 @@ class MainWindow(QWidget):
         )
         dlg.exec()
 
+    def _open_statistics(self):
+        """Otwiera okno analityki transferu i monitora zdrowia profili."""
+        dlg = StatisticsDialog(self)
+        dlg.exec()
+
+    def _apply_recommended_direction(self):
+        """Ustawia tryb synchronizacji na zarekomendowany przez algorytm analizy różnic."""
+        if getattr(self, "_recommended_direction", None) is not None:
+            target = self._recommended_direction
+            for idx in range(self.combo_sync_mode.count()):
+                if self.combo_sync_mode.itemData(idx) == target:
+                    self.combo_sync_mode.setCurrentIndex(idx)
+                    self.lbl_recommendation.setText("✅ Zastosowano rekomendowany kierunek synchronizacji!")
+                    self.btn_apply_recommendation.setVisible(False)
+                    break
+
     def _open_settings(self):
         from gui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self)
@@ -1453,6 +1539,11 @@ class MainWindow(QWidget):
         if hasattr(self, "btn_history"):
             self.btn_history.setText(tr("btn_history", lang))
             self.btn_history.setToolTip(tr("btn_history_tip", lang))
+        if hasattr(self, "btn_statistics"):
+            self.btn_statistics.setText(tr("btn_statistics", lang))
+            self.btn_statistics.setToolTip(tr("btn_statistics_tip", lang))
+        if hasattr(self, "btn_apply_recommendation"):
+            self.btn_apply_recommendation.setText(tr("btn_apply_recommendation", lang))
         if hasattr(self, "btn_export_html"):
             self.btn_export_html.setText(tr("btn_export_html", lang))
             self.btn_export_html.setToolTip(tr("btn_export_html_tip", lang))

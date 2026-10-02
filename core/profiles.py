@@ -22,6 +22,8 @@ class SyncProfile:
     raw_data: Optional[dict[str, Any]] = None
     exclude_patterns: list[str] = field(default_factory=list)
     description: str = ""
+    pre_sync_cmd: str = ""
+    post_sync_cmd: str = ""
 
 
 def get_config_dir() -> Path:
@@ -73,6 +75,8 @@ def _parse_profile_dict(name: str, item: dict[str, Any]) -> Optional[SyncProfile
     raw_patterns = item.get("exclude_patterns", [])
     exclude_patterns = [str(x) for x in raw_patterns] if isinstance(raw_patterns, list) else []
     description = str(item.get("description", "")).strip()
+    pre_sync_cmd = str(item.get("pre_sync_cmd", "")).strip()
+    post_sync_cmd = str(item.get("post_sync_cmd", "")).strip()
 
     return SyncProfile(
         name=p_name,
@@ -84,6 +88,8 @@ def _parse_profile_dict(name: str, item: dict[str, Any]) -> Optional[SyncProfile
         raw_data=item,
         exclude_patterns=exclude_patterns,
         description=description,
+        pre_sync_cmd=pre_sync_cmd,
+        post_sync_cmd=post_sync_cmd,
     )
 
 
@@ -147,6 +153,8 @@ def save_profile(profile: SyncProfile) -> bool:
                 "sync_mode": p.sync_mode,
                 "exclude_patterns": getattr(p, "exclude_patterns", []),
                 "description": getattr(p, "description", ""),
+                "pre_sync_cmd": getattr(p, "pre_sync_cmd", ""),
+                "post_sync_cmd": getattr(p, "post_sync_cmd", ""),
             })
             output_list.append(base_dict)
 
@@ -186,6 +194,8 @@ def delete_profile(name: str) -> bool:
                 "sync_mode": p.sync_mode,
                 "exclude_patterns": getattr(p, "exclude_patterns", []),
                 "description": getattr(p, "description", ""),
+                "pre_sync_cmd": getattr(p, "pre_sync_cmd", ""),
+                "post_sync_cmd": getattr(p, "post_sync_cmd", ""),
             })
             output_list.append(base_dict)
 

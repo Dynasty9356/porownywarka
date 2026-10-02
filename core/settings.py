@@ -24,6 +24,8 @@ class AppSettings:
     # Zachowanie synchronizacji
     confirm_sync: str = "always"                # always | overwrite_only | never
     default_sync_mode: str = "UPDATE_OLDER"
+    backup_retention_count: int = 10            # Maksymalna liczba zachowanych sesji .backup na folder
+    backup_auto_cleanup: bool = True            # Automatyczne usuwanie najstarszych kopii zapasowych
 
     # Tabela wyników
     default_sort_column: int = 1                # kolumna Statusu

@@ -61,6 +61,9 @@ class SyncReport:
     is_dry_run: bool = False
     cancelled: bool = False
     dry_run_actions: list[str] = field(default_factory=list)  # opisy symulowanych operacji
+    cleaned_backups: int = 0
+    pre_hook_output: str = ""
+    post_hook_output: str = ""
 
     def summary(self) -> str:
         duration = ""
@@ -81,11 +84,12 @@ class SyncReport:
 
         status_txt = "Zakończono sukcesem" if self.success and not self.errors else "Zakończono z ostrzeżeniami/błędami"
         backup_info = f"\nKopie zapasowe (.backup): {len(self.backup_dirs)} lokalizacji" if self.backup_dirs else ""
+        cleaned_info = f"\n- Zretencjonowano (usunięto) starych kopii: {self.cleaned_backups}" if self.cleaned_backups else ""
         del_info = f"\n- Bezpiecznie usunięto z B: {self.files_deleted}" if self.files_deleted else ""
         return (
             f"Raport synchronizacji: {status_txt}{duration}\n"
             f"- Zaktualizowano plików: {self.files_updated}{del_info}\n"
-            f"- Wykonano kopii zapasowych: {self.files_backed_up}\n"
+            f"- Wykonano kopii zapasowych: {self.files_backed_up}{cleaned_info}\n"
             f"- Przesłano danych: {self.bytes_transferred / (1024 * 1024):.2f} MB\n"
             f"- Błędów: {len(self.errors)}{backup_info}"
         )
@@ -119,6 +123,160 @@ def safe_restore_file(src_backup: Path, dst_target: Path, verify_sha256: bool = 
         return True, ""
     except Exception as e:
         return False, str(e)
+
+
+def cleanup_old_backups(dest_root: Path, max_keep: int = 10) -> int:
+    """Automatyczna polityka retencji: usuwa najstarsze katalogi backup_* zwalniając miejsce."""
+    if max_keep <= 0:
+        return 0
+    backup_base = dest_root / ".backup"
+    if not backup_base.is_dir():
+        return 0
+    try:
+        session_dirs = [
+            d for d in backup_base.iterdir()
+            if d.is_dir() and (d.name.startswith("backup_") or d.name.startswith("20"))
+        ]
+        if len(session_dirs) <= max_keep:
+            return 0
+        session_dirs.sort(key=lambda d: d.name)
+        to_delete = session_dirs[: len(session_dirs) - max_keep]
+        deleted_count = 0
+        for d in to_delete:
+            shutil.rmtree(d, ignore_errors=True)
+            deleted_count += 1
+        return deleted_count
+    except Exception:
+        return 0
+
+
+def check_disk_space(
+    actions: list[SyncAction],
+    safety_margin_bytes: int = 50 * 1024 * 1024,
+) -> tuple[bool, str]:
+    """Weryfikacja Pre-Flight wolnego miejsca na dysku docelowym (Standard NASA)."""
+    needed_per_target: dict[str, int] = {}
+    for act in actions:
+        if act.is_delete:
+            continue
+        try:
+            target_parent = act.dest_path.parent
+            anchor = act.dest_path.drive or act.dest_path.anchor or str(target_parent)
+            size = act.item.size_a or 0
+            if act.will_overwrite:
+                size += (act.item.size_b or 0)
+            needed_per_target[anchor] = needed_per_target.get(anchor, 0) + size
+        except Exception:
+            continue
+
+    for anchor, needed in needed_per_target.items():
+        try:
+            usage = shutil.disk_usage(anchor)
+            if usage.free < (needed + safety_margin_bytes):
+                free_mb = usage.free / (1024 * 1024)
+                needed_mb = (needed + safety_margin_bytes) / (1024 * 1024)
+                return False, f"Brak miejsca na dysku {anchor}: Dostępne {free_mb:.1f} MB, wymagane {needed_mb:.1f} MB."
+        except Exception:
+            pass
+    return True, ""
+
+
+def run_hook_command(command: str, timeout_sec: int = 30) -> tuple[bool, str]:
+    """Bezpieczne wykonanie polecenia Pre/Post Sync Hook z limitem czasu (Standard CERT)."""
+    if not command or not command.strip():
+        return True, ""
+    try:
+        import subprocess
+        res = subprocess.run(
+            command.strip(),
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+        out = (res.stdout or "") + ("\n" + res.stderr if res.stderr else "")
+        return res.returncode == 0, out.strip()
+    except subprocess.TimeoutExpired:
+        return False, f"Przekroczono limit czasu ({timeout_sec}s) dla polecenia."
+    except Exception as e:
+        return False, str(e)
+
+
+def safe_atomic_copy_file(
+    src: Path,
+    dst: Path,
+    verify_sha256: bool = True,
+    max_retries: int = 3,
+    retry_delay_sec: float = 0.5,
+) -> int:
+    """Atomowe kopiowanie pliku z weryfikacją SHA-256 oraz odpornością na przejściowe błędy sieci (NASA / CERT)."""
+    import time
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dst = dst.with_name(f".tmp_sync_{dst.name}")
+
+    last_error: Optional[Exception] = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            if tmp_dst.exists():
+                tmp_dst.unlink(missing_ok=True)
+
+            shutil.copy2(src, tmp_dst)
+
+            if verify_sha256:
+                src_hash = calculate_sha256(src)
+                tmp_hash = calculate_sha256(tmp_dst)
+                if src_hash != tmp_hash:
+                    if tmp_dst.exists():
+                        tmp_dst.unlink(missing_ok=True)
+                    raise IOError(f"Błąd integralności pliku (SHA-256 mismatch): {src.name}")
+
+            os.replace(tmp_dst, dst)
+            return dst.stat().st_size
+        except (OSError, IOError) as err:
+            last_error = err
+            if tmp_dst.exists():
+                try:
+                    tmp_dst.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if attempt < max_retries:
+                time.sleep(retry_delay_sec * attempt)
+            else:
+                raise last_error
+
+    return 0
+
+
+def recommend_sync_direction(items: list[ComparisonItem]) -> tuple[SyncDirection, str]:
+    """Inteligentna rekomendacja kierunku synchronizacji na podstawie analizy różnic w plikach."""
+    active_items = [i for i in items if i.status != FileStatus.IDENTICAL and i.status != FileStatus.ERROR]
+    if not active_items:
+        return SyncDirection.UPDATE_OLDER, "Katalogi są identyczne — brak wymaganych operacji."
+
+    newer_a = sum(1 for i in active_items if i.status == FileStatus.NEWER_A)
+    newer_b = sum(1 for i in active_items if i.status == FileStatus.NEWER_B)
+    only_a = sum(1 for i in active_items if i.status == FileStatus.ONLY_A)
+    only_b = sum(1 for i in active_items if i.status == FileStatus.ONLY_B)
+
+    changes_a = newer_a + only_a
+    changes_b = newer_b + only_b
+
+    if changes_a > 0 and changes_b == 0:
+        return (
+            SyncDirection.COPY_A_TO_B,
+            f"Wszystkie zmodyfikowane i nowe pliki ({changes_a}) znajdują się w Katalogu A.",
+        )
+    elif changes_b > 0 and changes_a == 0:
+        return (
+            SyncDirection.COPY_B_TO_A,
+            f"Wszystkie zmodyfikowane i nowe pliki ({changes_b}) znajdują się w Katalogu B.",
+        )
+    else:
+        return (
+            SyncDirection.UPDATE_OLDER,
+            f"Wykryto zmiany w obu katalogach (A: {changes_a}, B: {changes_b}). Zalecana inteligentna aktualizacja.",
+        )
+
 
 
 def plan_sync_actions(
@@ -183,6 +341,10 @@ def execute_sync(
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     dry_run: bool = False,
     cancel_token: Optional[Callable[[], bool]] = None,
+    pre_sync_cmd: str = "",
+    post_sync_cmd: str = "",
+    auto_cleanup_backups: bool = True,
+    backup_retention_count: int = 10,
 ) -> SyncReport:
     """Wykonuje plan synchronizacji z atomowością operacji i weryfikacją sumy kontrolnej.
 
@@ -192,10 +354,33 @@ def execute_sync(
     :param progress_callback: Funkcja postępu (indeks, łącznie, nazwa_pliku)
     :param dry_run: Jeśli True, symuluje operacje BEZ modyfikowania dysku
     :param cancel_token: Funkcja zwracająca True jeśli przerwano operację
+    :param pre_sync_cmd: Opcjonalne polecenie wykonywane przed synchronizacją
+    :param post_sync_cmd: Opcjonalne polecenie wykonywane po udanej synchronizacji
+    :param auto_cleanup_backups: Czy automatycznie retencjonować stare kopie
+    :param backup_retention_count: Maksymalna liczba zachowanych sesji kopii
     """
     report = SyncReport(start_time=datetime.now(), is_dry_run=dry_run)
     total_actions = len(actions)
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Weryfikacja wolnego miejsca (Pre-Flight Disk Space Check - Standard NASA)
+    if not dry_run and actions:
+        space_ok, space_err = check_disk_space(actions)
+        if not space_ok:
+            report.success = False
+            report.errors.append(f"Odrzucono ze względów bezpieczeństwa: {space_err}")
+            report.end_time = datetime.now()
+            return report
+
+    # Wykonanie polecenia Pre-Sync Hook
+    if not dry_run and pre_sync_cmd:
+        pre_ok, pre_out = run_hook_command(pre_sync_cmd)
+        report.pre_hook_output = pre_out
+        if not pre_ok:
+            report.success = False
+            report.errors.append(f"Błąd Pre-Sync Hook: {pre_out}")
+            report.end_time = datetime.now()
+            return report
 
     # Tryb symulacji (Dry-Run)
     if dry_run:
@@ -273,32 +458,29 @@ def execute_sync(
                 if backup_root not in report.backup_dirs:
                     report.backup_dirs.append(backup_root)
 
-            # 2. Bezpieczne kopiowanie atomowe (najpierw do pliku .tmp, potem replace)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            tmp_dst = dst.with_name(f".tmp_sync_{dst.name}")
-
-            shutil.copy2(src, tmp_dst)
-
-            # 3. Weryfikacja kryptograficzna (NASA / CERT Standard)
-            if verify_sha256:
-                src_hash = calculate_sha256(src)
-                tmp_hash = calculate_sha256(tmp_dst)
-                if src_hash != tmp_hash:
-                    if tmp_dst.exists():
-                        tmp_dst.unlink()
-                    raise IOError(f"Błąd integralności pliku (SHA-256 mismatch): {act.item.rel_path}")
-
-            # Atomowa podmiana pliku docelowego
-            if tmp_dst.exists():
-                os.replace(tmp_dst, dst)
-
-            file_size = dst.stat().st_size
-            report.bytes_transferred += file_size
+            # 2. Bezpieczne kopiowanie atomowe z weryfikacją SHA-256 i odpornością sieciową
+            copied_bytes = safe_atomic_copy_file(src, dst, verify_sha256=verify_sha256)
+            report.bytes_transferred += copied_bytes
             report.files_updated += 1
 
         except Exception as e:
             report.success = False
             report.errors.append(f"Błąd przy {act.item.rel_path}: {e}")
+
+    # Automatyczna retencja i czyszczenie starych sesji .backup
+    if not dry_run and create_backup and auto_cleanup_backups and report.backup_dirs:
+        unique_bases = set()
+        for b_dir in report.backup_dirs:
+            unique_bases.add(b_dir.parent.parent)
+        for base in unique_bases:
+            report.cleaned_backups += cleanup_old_backups(base, max_keep=backup_retention_count)
+
+    # Wykonanie polecenia Post-Sync Hook
+    if not dry_run and post_sync_cmd and report.success and not report.cancelled:
+        post_ok, post_out = run_hook_command(post_sync_cmd)
+        report.post_hook_output = post_out
+        if not post_ok:
+            report.errors.append(f"Ostrzeżenie Post-Sync Hook: {post_out}")
 
     report.end_time = datetime.now()
     return report

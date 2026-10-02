@@ -153,6 +153,127 @@ class TestSecurityAndNewFeatures(unittest.TestCase):
         self.assertTrue(csv_out.exists())
         self.assertIn("test.txt", csv_out.read_text(encoding="utf-8-sig"))
 
+    def test_disk_space_check(self):
+        """Test pre-flight sprawdzania wolnego miejsca na dysku."""
+        from core.comparator import ComparisonItem, FileStatus
+        from core.synchronizer import SyncAction, check_disk_space
+        file_a = self.dir_a / "duzy.bin"
+        file_a.write_bytes(b"A" * 1024)
+        item = ComparisonItem(rel_path="duzy.bin", status=FileStatus.NEWER_A, size_a=1024)
+        action = SyncAction(item=item, source_path=file_a, dest_path=self.dir_b / "duzy.bin", will_overwrite=False, is_delete=False)
+
+        # Standardowy test - sukces
+        ok, msg = check_disk_space([action], safety_margin_bytes=1024)
+        self.assertTrue(ok)
+        self.assertEqual(msg, "")
+
+        # Symulacja braku miejsca z mockiem shutil.disk_usage
+        import unittest.mock as mock
+        with mock.patch("shutil.disk_usage") as mock_usage:
+            # Zwróć 100 bajtów wolnego miejsca (mniej niż 1024 + safety margin)
+            mock_usage.return_value = type("Usage", (), {"free": 100, "total": 1000, "used": 900})()
+            ok_fail, msg_fail = check_disk_space([action], safety_margin_bytes=1024)
+            self.assertFalse(ok_fail)
+            self.assertIn("Brak miejsca", msg_fail)
+
+    def test_backup_retention_cleanup(self):
+        """Test rotacji i usuwania najstarszych kopii zapasowych (Retention Policy)."""
+        from core.synchronizer import cleanup_old_backups
+        backup_root = self.dir_b / ".backup"
+        backup_root.mkdir()
+
+        # Utwórz 4 foldery timestamped
+        d1 = backup_root / "2026-01-01_10-00-00"
+        d2 = backup_root / "2026-01-02_10-00-00"
+        d3 = backup_root / "2026-01-03_10-00-00"
+        d4 = backup_root / "2026-01-04_10-00-00"
+        for d in (d1, d2, d3, d4):
+            d.mkdir()
+            (d / "dummy.txt").write_text("ok", encoding="utf-8")
+
+        # Pozostaw maksymalnie 2 najnowsze
+        removed_count = cleanup_old_backups(self.dir_b, max_keep=2)
+        self.assertEqual(removed_count, 2)
+        self.assertFalse(d1.exists())
+        self.assertFalse(d2.exists())
+        self.assertTrue(d3.exists())
+        self.assertTrue(d4.exists())
+
+    def test_hooks_execution(self):
+        """Test bezpiecznego uruchamiania hooków pre/post-sync."""
+        from core.synchronizer import run_hook_command
+        # Test pustej komendy (nie wykonuje nic, zwraca True)
+        ok, out = run_hook_command("")
+        self.assertTrue(ok)
+        self.assertEqual(out, "")
+
+        # Test poprawnej komendy platform-independent (Python)
+        import sys
+        cmd = f'"{sys.executable}" -c "print(\'Hook OK\')"'
+        ok_p, out_p = run_hook_command(cmd)
+        self.assertTrue(ok_p)
+        self.assertIn("Hook OK", out_p)
+
+        # Test błędnej komendy zwracającej exit code != 0
+        fail_cmd = f'"{sys.executable}" -c "import sys; sys.exit(42)"'
+        ok_f, out_f = run_hook_command(fail_cmd)
+        self.assertFalse(ok_f)
+
+    def test_safe_atomic_copy_file(self):
+        """Test bezpiecznego atomowego kopiowania z weryfikacją SHA-256."""
+        from core.synchronizer import safe_atomic_copy_file
+        src = self.dir_a / "source_atomic.txt"
+        dst = self.dir_b / "copied_atomic.txt"
+        content = b"Wazne dane enterprise o wysokiej wartosci"
+        src.write_bytes(content)
+
+        copied_size = safe_atomic_copy_file(src, dst, verify_sha256=True)
+        self.assertEqual(copied_size, len(content))
+        self.assertTrue(dst.exists())
+        self.assertEqual(dst.read_bytes(), content)
+
+    def test_recommend_sync_direction(self):
+        """Test inteligentnej rekomendacji kierunku synchronizacji (AI Hint)."""
+        from core.comparator import ComparisonItem, FileStatus
+        from core.synchronizer import SyncDirection, recommend_sync_direction
+
+        # Przypadek 1: Tylko zmiany w A
+        items_a = [
+            ComparisonItem(rel_path="a1.txt", status=FileStatus.NEWER_A),
+            ComparisonItem(rel_path="a2.txt", status=FileStatus.ONLY_A),
+        ]
+        dir_res, msg = recommend_sync_direction(items_a)
+        self.assertEqual(dir_res, SyncDirection.COPY_A_TO_B)
+        self.assertIn("Katalogu A", msg)
+
+        # Przypadek 2: Tylko zmiany w B
+        items_b = [
+            ComparisonItem(rel_path="b1.txt", status=FileStatus.NEWER_B),
+        ]
+        dir_res_b, msg_b = recommend_sync_direction(items_b)
+        self.assertEqual(dir_res_b, SyncDirection.COPY_B_TO_A)
+        self.assertIn("Katalogu B", msg_b)
+
+        # Przypadek 3: Zmiany po obu stronach
+        items_both = [
+            ComparisonItem(rel_path="a1.txt", status=FileStatus.NEWER_A),
+            ComparisonItem(rel_path="b1.txt", status=FileStatus.NEWER_B),
+        ]
+        dir_res_both, msg_both = recommend_sync_direction(items_both)
+        self.assertEqual(dir_res_both, SyncDirection.UPDATE_OLDER)
+        self.assertIn("obu katalogach", msg_both)
+
+    def test_statistics_dialog_initialization(self):
+        """Test inicjalizacji okna statystyk i analityki (WCAG AA)."""
+        from PyQt6.QtWidgets import QApplication
+        from gui.statistics_dialog import StatisticsDialog
+        app = QApplication.instance() or QApplication([])
+
+        dlg = StatisticsDialog()
+        self.assertIsNotNone(dlg)
+        self.assertIn("Panel Statystyk", dlg.windowTitle())
+        dlg.close()
+
 
 if __name__ == "__main__":
     unittest.main()

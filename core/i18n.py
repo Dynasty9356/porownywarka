@@ -250,6 +250,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pl": "Przeglądaj historię porównań i synchronizacji",
         "en": "View comparison and synchronization history",
     },
+    "btn_statistics": {
+        "pl": "📊 Statystyki",
+        "en": "📊 Statistics",
+    },
+    "btn_statistics_tip": {
+        "pl": "Otwórz panel analityki transferu i monitor zdrowia profili",
+        "en": "Open transfer analytics and profile health monitor",
+    },
+    "btn_apply_recommendation": {
+        "pl": "💡 Zastosuj sugestię",
+        "en": "💡 Apply suggestion",
+    },
     "btn_export_html": {
         "pl": "📄 Eksport HTML",
         "en": "📄 Export HTML",
