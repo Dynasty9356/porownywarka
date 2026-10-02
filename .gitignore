@@ -2,6 +2,7 @@
 .env
 .env.local
 config.json
+.gitignore
 
 # Całe foldery (np. zależności i moduły)
 node_modules/
