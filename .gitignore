@@ -1,26 +1,33 @@
-# Pliki ze zmiennymi środowiskowymi i kluczami API (bardzo ważne!)
+# Środowisko wirtualne Python
+.venv/
+env/
+venv/
+__pycache__/
+*.py[cod]
+
+# Pliki ze zmiennymi środowiskowymi i kluczami API (ochrona danych)
 .env
 .env.local
 config.json
-.gitignore
-
-# Całe foldery (np. zależności i moduły)
-node_modules/
-vendor/
-tests/
 
 # Pliki generowane podczas budowania / kompilacji
 dist/
 build/
+output_installer/
 *.exe
 *.apk
+*.log
+build_log.txt
+inno_log.txt
+fix_out.txt
+test_run.txt
 
 # Pliki tymczasowe i specyficzne dla systemu
 .DS_Store
 Thumbs.db
-*.log
+desktop.ini
+*.tmp
 
 # Foldery środowiska IDE / edytorów kodu
 .vscode/
 .idea/
-.agents/
