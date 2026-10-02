@@ -19,6 +19,7 @@ ENV/
 build/
 dist/
 output_installer/
+.agents/
 *.exe
 *.dll
 *.pyd
