@@ -1,1 +1,0 @@
-SUCCESS: auto_compare_on_profile_load integrated
